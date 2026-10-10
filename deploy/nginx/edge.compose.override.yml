@@ -1,0 +1,8 @@
+# Install once as ~/docker-app/docker-compose.override.yml.
+# If an override already exists, MERGE these mounts into its nginx service.
+# Club Events deployments only replace docker-compose.yml and nginx/nginx.conf.
+services:
+  nginx:
+    volumes:
+      - ./nginx/son-durak:/etc/nginx/son-durak:ro
+      - ./nginx/son-durak-loader.conf:/etc/nginx/conf.d/son-durak.conf:ro

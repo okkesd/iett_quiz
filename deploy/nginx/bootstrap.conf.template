@@ -1,0 +1,12 @@
+# Initial certificate issuance. Existing Club Events server blocks are untouched.
+server {
+    listen 80;
+    server_name QUIZ_DOMAIN;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    # Wait for HTTPS before allowing sign-in or game traffic.
+    location / { default_type text/plain; return 503 'HTTPS is being configured.\n'; }
+}

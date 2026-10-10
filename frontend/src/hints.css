@@ -1,0 +1,20 @@
+.hint-actions { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+.hint-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--accent-soft); color: var(--accent); font-size: .875rem; font-weight: 500; }
+.hint-button:hover:not(:disabled) { border-color: var(--accent); }
+.hint-actions > span { color: var(--muted); font-size: .75rem; line-height: 1.6; }
+.hint-panel { padding: 22px; margin-bottom: 22px; border: 1px solid var(--line); border-radius: 15px; background: var(--accent-soft); }
+.hint-panel h2 { display: flex; gap: 8px; align-items: center; font-size: 1rem; color: var(--accent); letter-spacing: -.01em; }
+.hint-panel p { font-size: .94rem; color: var(--ink); line-height: 1.75; margin-top: 10px; }
+.hint-panel .map-wrap { margin-top: 17px; margin-bottom: 0; }
+.hint-panel .route-map { height: 260px; }
+.results-page .result-hints { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: .875rem; margin: 0 0 22px; }
+.auto-advance { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); font-size: .8rem; }
+.auto-advance label { display: flex; align-items: center; gap: 10px; }
+.auto-advance select { padding: 10px; min-height: 44px; }
+.auto-advance > span { color: var(--muted); }
+.auto-advance .secondary { min-height: 44px; padding: 9px 14px; font-size: .8rem; }
+@media (max-width: 650px) {
+ .hint-actions { gap: 8px 12px; }
+ .hint-panel { padding: 17px 14px; }
+ .hint-panel .route-map { height: 225px; }
+}

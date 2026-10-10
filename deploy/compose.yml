@@ -1,0 +1,49 @@
+name: son-durak
+services:
+  api:
+    profiles: [server]
+    image: ${IMAGE_PREFIX:?Set IMAGE_PREFIX}/son-durak-api:${RELEASE_TAG:?Set RELEASE_TAG}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    environment:
+      BIND_ADDRESS: 0.0.0.0:3001
+      AUTH_MODE: supabase
+      CORS_ORIGIN: https://${QUIZ_DOMAIN:-iettquiz.duckdns.org}
+      DATABASE_URL: sqlite:///app/data/son-durak.sqlite
+      QUESTION_BANK_PATH: /app/bank/question-bank.json
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+      RUST_LOG: son_durak_api=info,tower_http=info
+    volumes:
+      - quiz-data:/app/data
+    networks:
+      private:
+        aliases: [son-durak-api]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  web:
+    image: ${IMAGE_PREFIX:?Set IMAGE_PREFIX}/son-durak-web:${RELEASE_TAG:?Set RELEASE_TAG}
+    restart: unless-stopped
+    # No published ports: the existing Club Events nginx owns host 80/443.
+    # Only the web service joins its network; the API stays on our own network.
+    networks:
+      private: {}
+      edge:
+        aliases: [son-durak-web]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+volumes:
+  quiz-data:
+networks:
+  private: {}
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:?Resolve the existing nginx network first}

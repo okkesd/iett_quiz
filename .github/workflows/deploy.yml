@@ -1,0 +1,119 @@
+name: Deploy Son Durak
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'İlk kurulum: prepare → sunucuda HTTPS kurulumu → deploy'
+        required: true
+        default: deploy
+        type: choice
+        options: [prepare, deploy]
+permissions:
+  contents: read
+concurrency:
+  group: son-durak-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      QUIZ_DOMAIN: ${{ vars.QUIZ_DOMAIN || 'iettquiz.duckdns.org' }}
+      EDGE_NETWORK: ${{ vars.EDGE_NETWORK || 'auto' }}
+      EDGE_CONTAINER: ${{ vars.EDGE_CONTAINER || 'nginx' }}
+      EDGE_STACK_DIR: ${{ vars.EDGE_STACK_DIR }}
+      IMAGE_PREFIX: ${{ secrets.DOCKER_USERNAME }}
+      RELEASE_TAG: ${{ github.sha }}-${{ github.run_number }}-${{ github.run_attempt }}
+      # Requested production mode: no account, progress saved in the browser.
+      DEPLOY_MODE: offline
+      DOCKER_PLATFORM: ${{ vars.DOCKER_PLATFORM || 'linux/amd64' }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate and prepare deployment configuration
+        run: |
+          python3 deploy/scripts/configure.py
+          for file in deploy/scripts/*.sh; do bash -n "$file"; done
+          python3 -m unittest discover -s tests -p 'test_deploy.py'
+          docker compose --env-file deploy/.env -f deploy/compose.yml config --quiet
+      - uses: actions/setup-node@v6
+        if: inputs.operation == 'deploy'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Test frontend
+        if: inputs.operation == 'deploy'
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+      - uses: docker/setup-qemu-action@v3
+        if: inputs.operation == 'deploy' && vars.DOCKER_PLATFORM == 'linux/arm64'
+      - uses: docker/setup-buildx-action@v3
+        if: inputs.operation == 'deploy'
+      - name: Login to Docker Hub
+        if: inputs.operation == 'deploy'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build and push web image
+        if: inputs.operation == 'deploy'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: true
+          platforms: ${{ env.DOCKER_PLATFORM }}
+          tags: ${{ env.IMAGE_PREFIX }}/son-durak-web:${{ env.RELEASE_TAG }}
+          build-args: |
+            SITE_URL=https://${{ env.QUIZ_DOMAIN }}
+            API_BASE_URL=
+            AUTH_MODE=supabase
+          cache-from: type=gha,scope=son-durak-web
+          cache-to: type=gha,mode=max,scope=son-durak-web
+      - name: Test image behind an isolated nginx proxy
+        if: inputs.operation == 'deploy'
+        run: |
+          docker pull --platform "$DOCKER_PLATFORM" "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG"
+          bash deploy/scripts/smoke-test.sh "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG" "$QUIZ_DOMAIN"
+      - name: Copy release and deploy through SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?}" "${SSH_USER:?}" "${SSH_KEY:?}" "${SSH_KNOWN_HOSTS:?}"
+          [[ "$SSH_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$SSH_PORT > 0 && 10#$SSH_PORT < 65536 ))
+          umask 077
+          ssh_dir="$(mktemp -d "$RUNNER_TEMP/son-durak-ssh.XXXXXX")"
+          trap 'rm -rf "$ssh_dir"; rm -f deploy/.env release.tgz' EXIT
+          printf '%s\n' "$SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          ssh_options=(-i "$ssh_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$ssh_dir/known_hosts" -o ConnectTimeout=15)
+          tar --exclude='__pycache__' -czf release.tgz deploy/compose.yml deploy/.env deploy/scripts deploy/nginx deploy/README.md
+          ssh -p "$SSH_PORT" "${ssh_options[@]}" "$SSH_USER@$SSH_HOST" 'umask 077; mkdir -p ~/son-durak'
+          scp -P "$SSH_PORT" "${ssh_options[@]}" release.tgz "$SSH_USER@$SSH_HOST:son-durak/release.tgz"
+          ssh -p "$SSH_PORT" "${ssh_options[@]}" "$SSH_USER@$SSH_HOST" 'set -eu; cd ~/son-durak; if [ -f deploy/.env.last-successful ]; then cp deploy/.env.last-successful deploy/.env.previous; fi; tar -xzf release.tgz; rm release.tgz; chmod 600 deploy/.env'
+          if [[ "$OPERATION" == deploy ]]; then
+            : "${DOCKER_PASSWORD:?}"
+            # configure.py has validated the Docker Hub username. Token goes only
+            # through SSH stdin, never a command argument or a release archive.
+            printf '%s' "$DOCKER_PASSWORD" | ssh -p "$SSH_PORT" "${ssh_options[@]}" "$SSH_USER@$SSH_HOST" "docker login --username '$DOCKER_USERNAME' --password-stdin"
+            ssh -p "$SSH_PORT" "${ssh_options[@]}" "$SSH_USER@$SSH_HOST" 'cd ~/son-durak && bash deploy/scripts/deploy.sh'
+            printf '### Son Durak yayında\n\nhttps://%s\n\nImage: `%s/son-durak-web:%s`\n' "$QUIZ_DOMAIN" "$IMAGE_PREFIX" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '### Sunucu dosyaları hazır\n\n`~/son-durak/deploy` kopyalandı. `deploy/README.md` içindeki bootstrap → Certbot → HTTPS adımlarını tamamlayıp bu workflow’u **deploy** ile çalıştır.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Remove generated configuration
+        if: always()
+        run: rm -f deploy/.env release.tgz

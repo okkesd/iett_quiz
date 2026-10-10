@@ -1,0 +1,24 @@
+.remote-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+.remote-controls button:disabled { opacity: .5; cursor: not-allowed; }
+.auth-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.auth-card { width: 100%; max-width: 460px; }
+.auth-card > svg { margin-bottom: 16px; }
+.auth-card > .quick-side { margin-top: 24px; }
+.auth-card form, .account-settings form { display: flex; flex-direction: column; gap: 18px; margin-top: 24px; }
+.auth-card label, .account-settings label, .leaderboard-filters label { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.auth-card input, .account-settings input:not([type='checkbox']), .leaderboard-filters select { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--surface); color: inherit; min-width: 0; font-size: 16px; }
+.account-settings { margin-top: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 18px; }
+.account-settings summary { cursor: pointer; min-height: 28px; }
+.account-settings form { max-width: 500px; }
+.account-settings .checkbox-label { flex-direction: row; align-items: flex-start; gap: 10px; line-height: 1.6; }
+.checkbox-label input { margin-top: 5px; }
+.leaderboard-filters { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }
+.remote-game-actions { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 20px; }
+html[data-theme='dark'] .auth-card input, html[data-theme='dark'] .account-settings input:not([type='checkbox']), html[data-theme='dark'] .leaderboard-filters select { background: var(--surface); }
+
+.auth-card { background: var(--surface); border: 1px solid var(--line); border-radius: 28px; padding: 36px; box-shadow: var(--shadow); }
+.auth-card > svg { color: var(--accent); }
+.auth-card > .quick-side { display: flex; gap: 8px; background: var(--raised); padding: 5px; border-radius: 12px; }
+.auth-card > .quick-side button { min-height: 44px; flex: 1; border-radius: 9px; font-size: .8rem; }
+.auth-card > .quick-side button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: var(--shadow); }
+@media(max-width:650px) { .auth-card { padding: 28px 22px; } }

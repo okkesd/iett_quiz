@@ -1,0 +1,36 @@
+# Loaded by the EXISTING edge nginx via son-durak-loader.conf.
+server {
+    listen 80;
+    server_name QUIZ_DOMAIN;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / { return 301 https://QUIZ_DOMAIN$request_uri; }
+}
+server {
+    listen 443 ssl;
+    server_name QUIZ_DOMAIN;
+    ssl_certificate /etc/letsencrypt/live/QUIZ_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/QUIZ_DOMAIN/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    server_tokens off;
+    client_max_body_size 32k;
+    add_header Strict-Transport-Security 'max-age=31536000' always;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    location / {
+        # Runtime resolution follows new web container IPs after a deployment.
+        set $quiz_web son-durak-web:80;
+        proxy_pass http://$quiz_web;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # This is the public edge; don't trust a client-supplied forwarding chain.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 35s;
+    }
+}

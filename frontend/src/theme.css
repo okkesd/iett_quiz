@@ -1,0 +1,68 @@
+:root {
+  color-scheme: light;
+  --canvas: #f5f6f8;
+  --surface: #fff;
+  --raised: #f0f2f5;
+  --ink: #202631;
+  --muted: #69727f;
+  --line: #e4e7ec;
+  --accent: #23845b;
+  --accent-hover: #196d49;
+  --accent-soft: #e8f5ed;
+  --glass: rgba(249, 250, 252, .84);
+  --sidebar-glass: rgba(239, 242, 247, .88);
+  --shadow: 0 3px 12px #18264104, 0 1px 3px #18264104;
+  --success: #24805b;
+  --success-soft: #edf8f1;
+  --danger: #c14a4a;
+  --danger-soft: #fff0ef;
+  --hero: #e9f3ec;
+  --hero-ink: #285640;
+  --map-route: #23845b;
+  --map-stop: #fff;
+  --map-endpoint: #ffca65;
+  --radius: 22px;
+}
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #111318;
+  --surface: #1c1f26;
+  --raised: #272b34;
+  --ink: #f0f2f7;
+  --muted: #a2aaba;
+  --line: #333844;
+  --accent: #7bd4a5;
+  --accent-hover: #a1e5be;
+  --accent-soft: #233d30;
+  --glass: rgba(20, 23, 29, .88);
+  --sidebar-glass: rgba(24, 28, 35, .9);
+  --shadow: 0 3px 14px #00000012;
+  --success: #7ad6a8;
+  --success-soft: #1c352a;
+  --danger: #ff9993;
+  --danger-soft: #3b2628;
+  --hero: #21392c;
+  --hero-ink: #d6efdf;
+  --map-route: #7bd4a5;
+  --map-stop: #24372c;
+  --map-endpoint: #ffca65;
+}
+.route-map .route-path, .route-map .route-stop { stroke: var(--map-route); }
+.route-map .route-stop { fill: var(--map-stop); }
+.route-map .route-endpoint { fill: var(--map-endpoint); }
+html[data-theme='dark'] .leaflet-tile-pane { filter: brightness(.72) saturate(.65); }
+html[data-theme='dark'] .leaflet-control a, html[data-theme='dark'] .leaflet-tooltip, html[data-theme='dark'] .leaflet-control-attribution { background: var(--surface); color: var(--ink); border-color: var(--line); }
+@media (prefers-reduced-transparency: reduce) {
+  :root { --glass: #f9fafc; --sidebar-glass: #eff2f7; }
+  html[data-theme='dark'] { --glass: #14171d; --sidebar-glass: #181c23; }
+  .sidebar, .topbar, .toast { backdrop-filter: none !important; }
+}
+@media (prefers-contrast: more) {
+  :root { --muted: #424b59; --line: #707986; --glass: #fff; --sidebar-glass: #f0f2f5; }
+  html[data-theme='dark'] { --muted: #d5dbe6; --line: #8994a7; --glass: #111318; --sidebar-glass: #1c1f26; }
+  .primary, .secondary, .segmented-control, .home-start, .sidebar, .topbar { border: 1px solid var(--ink); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  button:active:not(:disabled) { transform: none; }
+}
