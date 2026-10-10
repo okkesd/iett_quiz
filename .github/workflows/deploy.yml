@@ -1,5 +1,7 @@
 name: Deploy Son Durak
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
     inputs:
       operation:
@@ -19,6 +21,7 @@ jobs:
     timeout-minutes: 30
     environment: production
     env:
+      OPERATION: ${{ inputs.operation || 'deploy' }}
       QUIZ_DOMAIN: ${{ vars.QUIZ_DOMAIN || 'iettquiz.duckdns.org' }}
       EDGE_NETWORK: ${{ vars.EDGE_NETWORK || 'auto' }}
       EDGE_CONTAINER: ${{ vars.EDGE_CONTAINER || 'nginx' }}
@@ -37,29 +40,29 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_deploy.py'
           docker compose --env-file deploy/.env -f deploy/compose.yml config --quiet
       - uses: actions/setup-node@v6
-        if: inputs.operation == 'deploy'
+        if: env.OPERATION == 'deploy'
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Test frontend
-        if: inputs.operation == 'deploy'
+        if: env.OPERATION == 'deploy'
         working-directory: frontend
         run: |
           npm ci
           npm test
       - uses: docker/setup-qemu-action@v3
-        if: inputs.operation == 'deploy' && vars.DOCKER_PLATFORM == 'linux/arm64'
+        if: env.OPERATION == 'deploy' && vars.DOCKER_PLATFORM == 'linux/arm64'
       - uses: docker/setup-buildx-action@v3
-        if: inputs.operation == 'deploy'
+        if: env.OPERATION == 'deploy'
       - name: Login to Docker Hub
-        if: inputs.operation == 'deploy'
+        if: env.OPERATION == 'deploy'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Build and push web image
-        if: inputs.operation == 'deploy'
+        if: env.OPERATION == 'deploy'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -74,7 +77,7 @@ jobs:
           cache-from: type=gha,scope=son-durak-web
           cache-to: type=gha,mode=max,scope=son-durak-web
       - name: Test image behind an isolated nginx proxy
-        if: inputs.operation == 'deploy'
+        if: env.OPERATION == 'deploy'
         run: |
           docker pull --platform "$DOCKER_PLATFORM" "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG"
           bash deploy/scripts/smoke-test.sh "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG" "$QUIZ_DOMAIN"
@@ -120,7 +123,7 @@ jobs:
             rm release.tgz
             chmod 600 deploy/.env
       - name: Deploy through SSH
-        if: inputs.operation == 'deploy'
+        if: env.OPERATION == 'deploy'
         uses: appleboy/ssh-action@v1
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
@@ -140,8 +143,6 @@ jobs:
             cd "$HOME/son-durak"
             bash deploy/scripts/deploy.sh
       - name: Write deployment summary
-        env:
-          OPERATION: ${{ inputs.operation }}
         run: |
           if [[ "$OPERATION" == deploy ]]; then
             printf '### Son Durak yayında\n\nhttps://%s\n\nImage: `%s/son-durak-web:%s`\n' "$QUIZ_DOMAIN" "$IMAGE_PREFIX" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
