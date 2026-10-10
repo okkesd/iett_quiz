@@ -37,6 +37,7 @@ services:
       edge:
         aliases: [son-durak-web]
     security_opt: [no-new-privileges:true]
+    
     logging:
       driver: json-file
       options: {max-size: 10m, max-file: '3'}
