@@ -1,0 +1,34 @@
+name: Validate weekly IETT snapshot
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+permissions:
+  contents: read
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: python3 scripts/import_data.py --source auto
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: npm run build
+        working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iett-network-snapshot
+          path: frontend/public/data/network.json
+          retention-days: 30

@@ -26,7 +26,7 @@ Nginx, `son-durak-web` adresini çalışma sırasında Docker DNS ile çözer. W
 
 Repository → **Settings → Environments → New environment → `production`**. Aşağıdakileri bu environment’a ekle. Repository seviyesindeki Actions secrets/variables da kullanılabilir.
 
-### Secrets — gerekli altı değer
+### Secrets — gerekli beş değer
 
 | Secret | Değer |
 | --- | --- |
@@ -35,18 +35,10 @@ Repository → **Settings → Environments → New environment → `production`*
 | `SSH_HOST` | Sunucunun genel IPv4 adresi veya SSH hostname’i. |
 | `SSH_USER` | Sunucuda Docker çalıştırabilen kullanıcı; Club Events ile aynı kullanıcı olabilir. |
 | `SSH_KEY` | Bu kullanıcı için SSH private key’in tamamı; `BEGIN`/`END` satırları dahil. |
-| `SSH_KNOWN_HOSTS` | Sunucunun doğrulanmış SSH host key satırı/satırları. |
 
-`SSH_KNOWN_HOSTS` için kendi makinenizde:
+Club Events gibi dosya aktarımı `appleboy/scp-action@v1`, uzak komutlar `appleboy/ssh-action@v1` ile çalışır. `SSH_KNOWN_HOSTS` gerekmez. Bu ayarda SSH sunucusunun host key/fingerprint doğrulaması yapılmaz; bağlantı SSH anahtarınla açılır. [Action bağlantı ayarları](https://github.com/appleboy/scp-action#connection-settings).
 
-```bash
-ssh-keyscan -p 22 SUNUCU_IP > /tmp/son-durak-known-hosts
-ssh-keygen -lf /tmp/son-durak-known-hosts
-```
-
-Sunucu konsolunda `sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` ile görülen fingerprint’i karşılaştır; doğruladığın ilgili satırı secret olarak ekle. `ssh-keyscan` çıktısı tek başına kimlik doğrulaması değildir. Özel portta satır `[SUNUCU_IP]:PORT ...` biçimindedir. Workflow host doğrulamasını kapatmaz.
-
-Docker Hub’da `KULLANICI/son-durak-web` repository’sini oluştur. Private da olabilir: workflow sunucuda Docker login’i tokenı SSH stdin üzerinden geçirerek yapar; ayrıca bir pull secretı gerekmez. Token release arşivine veya komut argümanına yazılmaz.
+Docker Hub’da `KULLANICI/son-durak-web` repository’sini oluştur. Private da olabilir: token SSH action’a ortam değişkeni olarak iletilir ve sunucuda `docker login --password-stdin` ile kullanılır; ayrıca bir pull secretı gerekmez. Token release arşivine yazılmaz.
 
 ### Variables — hepsi varsayılanlı
 

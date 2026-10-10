@@ -78,38 +78,72 @@ jobs:
         run: |
           docker pull --platform "$DOCKER_PLATFORM" "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG"
           bash deploy/scripts/smoke-test.sh "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG" "$QUIZ_DOMAIN"
-      - name: Copy release and deploy through SSH
+      - name: Package release
+        run: |
+          umask 077
+          tar --exclude='__pycache__' -czf release.tgz deploy/compose.yml deploy/.env deploy/scripts deploy/nginx deploy/README.md
+      - name: Prepare remote directory
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ vars.SSH_PORT || '22' }}
+          script: |
+            set -eu
+            umask 077
+            mkdir -p "$HOME/son-durak"
+      - name: Copy release
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ vars.SSH_PORT || '22' }}
+          source: release.tgz
+          target: son-durak
+      - name: Extract release
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ vars.SSH_PORT || '22' }}
+          script: |
+            set -eu
+            umask 077
+            cd "$HOME/son-durak"
+            if [ -f deploy/.env.last-successful ]; then
+              cp deploy/.env.last-successful deploy/.env.previous
+            fi
+            tar -xzf release.tgz
+            rm release.tgz
+            chmod 600 deploy/.env
+      - name: Deploy through SSH
+        if: inputs.operation == 'deploy'
+        uses: appleboy/ssh-action@v1
         env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_KEY: ${{ secrets.SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-          SSH_PORT: ${{ vars.SSH_PORT || '22' }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ vars.SSH_PORT || '22' }}
+          envs: DOCKER_USERNAME,DOCKER_PASSWORD
+          command_timeout: 15m
+          script: |
+            set -eu
+            : "${DOCKER_USERNAME:?}" "${DOCKER_PASSWORD:?}"
+            printf '%s' "$DOCKER_PASSWORD" | docker login --username "$DOCKER_USERNAME" --password-stdin
+            unset DOCKER_PASSWORD
+            cd "$HOME/son-durak"
+            bash deploy/scripts/deploy.sh
+      - name: Write deployment summary
+        env:
           OPERATION: ${{ inputs.operation }}
         run: |
-          set -euo pipefail
-          : "${SSH_HOST:?}" "${SSH_USER:?}" "${SSH_KEY:?}" "${SSH_KNOWN_HOSTS:?}"
-          [[ "$SSH_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
-          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
-          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$SSH_PORT > 0 && 10#$SSH_PORT < 65536 ))
-          umask 077
-          ssh_dir="$(mktemp -d "$RUNNER_TEMP/son-durak-ssh.XXXXXX")"
-          trap 'rm -rf "$ssh_dir"; rm -f deploy/.env release.tgz' EXIT
-          printf '%s\n' "$SSH_KEY" > "$ssh_dir/key"
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
-          ssh_options=(-i "$ssh_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$ssh_dir/known_hosts" -o ConnectTimeout=15)
-          tar --exclude='__pycache__' -czf release.tgz deploy/compose.yml deploy/.env deploy/scripts deploy/nginx deploy/README.md
-          ssh -p "$SSH_PORT" "${ssh_options[@]}" "$SSH_USER@$SSH_HOST" 'umask 077; mkdir -p ~/son-durak'
-          scp -P "$SSH_PORT" "${ssh_options[@]}" release.tgz "$SSH_USER@$SSH_HOST:son-durak/release.tgz"
-          ssh -p "$SSH_PORT" "${ssh_options[@]}" "$SSH_USER@$SSH_HOST" 'set -eu; cd ~/son-durak; if [ -f deploy/.env.last-successful ]; then cp deploy/.env.last-successful deploy/.env.previous; fi; tar -xzf release.tgz; rm release.tgz; chmod 600 deploy/.env'
           if [[ "$OPERATION" == deploy ]]; then
-            : "${DOCKER_PASSWORD:?}"
-            # configure.py has validated the Docker Hub username. Token goes only
-            # through SSH stdin, never a command argument or a release archive.
-            printf '%s' "$DOCKER_PASSWORD" | ssh -p "$SSH_PORT" "${ssh_options[@]}" "$SSH_USER@$SSH_HOST" "docker login --username '$DOCKER_USERNAME' --password-stdin"
-            ssh -p "$SSH_PORT" "${ssh_options[@]}" "$SSH_USER@$SSH_HOST" 'cd ~/son-durak && bash deploy/scripts/deploy.sh'
             printf '### Son Durak yayında\n\nhttps://%s\n\nImage: `%s/son-durak-web:%s`\n' "$QUIZ_DOMAIN" "$IMAGE_PREFIX" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
           else
             printf '### Sunucu dosyaları hazır\n\n`~/son-durak/deploy` kopyalandı. `deploy/README.md` içindeki bootstrap → Certbot → HTTPS adımlarını tamamlayıp bu workflow’u **deploy** ile çalıştır.\n' >> "$GITHUB_STEP_SUMMARY"
