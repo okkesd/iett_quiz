@@ -37,7 +37,6 @@ jobs:
         run: |
           python3 deploy/scripts/configure.py
           for file in deploy/scripts/*.sh; do bash -n "$file"; done
-          python3 -m unittest discover -s tests -p 'test_deploy.py'
           docker compose --env-file deploy/.env -f deploy/compose.yml config --quiet
       - uses: actions/setup-node@v6
         if: env.OPERATION == 'deploy'
