@@ -63,7 +63,7 @@ Alan adı farklı olacaksa önce `QUIZ_DOMAIN` variable’ını değiştir; aşa
 
 ### 2. Dosyaları Actions ile sunucuya gönder
 
-Bu repository’yi GitHub’a push et. **Actions → Deploy Son Durak → Run workflow → operation: `prepare`**.
+İlk otomatik deploy öncesinde aşağıdaki nginx/HTTPS kurulumunu tamamla. Dosyalar GitHub’da olduğunda **Actions → Deploy Son Durak → Run workflow → operation: `prepare`**.
 
 Bu işlem yapılandırmayı doğrular ve dosyaları `~/son-durak/deploy` dizinine kopyalar. Image üretmez, mevcut siteyi değiştirmez, uygulamayı başlatmaz.
 
@@ -122,7 +122,7 @@ Workflow testleri çalıştırır; `frontend/Dockerfile` ile image üretir ve Do
 
 ## Sonraki yayınlar ve geri dönüş
 
-Her güncellemede `operation: deploy` yeterli. Push otomatik yayın başlatmaz. Ortak nginx’in restart/reload edilmesi gerekmez; Club Events dosyalarının üzerine yazılmaz. Aynı repository’de deploy’lar sırayla çalışır; sunucudaki `flock` manuel eşzamanlı deploy’u engeller. Kullanıcıların mevcut service worker güncellemesini alması için açık sekmeleri kapatıp tekrar açmaları gerekebilir.
+`master` branch’ine her push (PR merge dahil) otomatik deploy başlatır. Elle yayınlamak için `operation: deploy` seçilebilir. Ortak nginx’in restart/reload edilmesi gerekmez; Club Events dosyalarının üzerine yazılmaz. Aynı repository’de deploy’lar sırayla çalışır; sunucudaki `flock` manuel eşzamanlı deploy’u engeller. Kullanıcıların mevcut service worker güncellemesini alması için açık sekmeleri kapatıp tekrar açmaları gerekebilir.
 
 Domain değişikliği önce yeni DNS/sertifika ve `install-edge.sh` işlemlerini, sonra yeni frontend build’ini gerektirir. Canonical URL, sitemap ve HTTPS yönlendirmesi aynı `QUIZ_DOMAIN` değerini kullanır.
 
