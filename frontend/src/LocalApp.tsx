@@ -1,3 +1,6 @@
+import { useFeedbackScroll } from './lib/useFeedbackScroll';
+import { usePageRoute, openQuiz, PAGE_PATHS, handlePageLink, type PageView } from './lib/routing';
+import RouteNotice from './components/RouteNotice';
 import HomeHeading from './components/HomeHeading';
 import AppFooter from './components/AppFooter';
 import { useCallback,useEffect,useMemo,useRef,useState } from 'react';
@@ -9,6 +12,7 @@ import RouteMap from './components/RouteMap';
 import { useTheme, type Theme } from './lib/theme';
 import { questionHint } from './lib/hints';
 import HintPanel from './components/HintPanel';
+import HintReveal from './components/HintReveal';
 import HomeModes from './components/HomeModes';
 import AutoAdvance from './components/AutoAdvance';
 import { quickDistricts, type Side } from './lib/regions';
@@ -26,11 +30,12 @@ export default function App(){
 }
 function Experience({network,theme,toggleTheme}:{network:Network;theme:Theme;toggleTheme:()=>void}){
  const engine=useMemo(()=>new QuizEngine(network),[network]);
- const [view,setView]=useState<'home'|'game'|'result'|'explore'|'progress'|'data'|'about'>('home');
- useEffect(()=>{window.scrollTo({top:0,behavior:'instant'});},[view]);
+ const {route,navigate}=usePageRoute();
+ const view=route.view;
+ const [routeError,setRouteError]=useState('');
+ useEffect(()=>{window.scrollTo({top:0,behavior:'instant'});},[route.path]);
  const [progress,setProgress]=useState<Progress>(loadProgress);
  const [difficulty,setDifficulty]=useState<Difficulty>('easy');
- const [autoDelay,setAutoDelay]=useState<0|5|10>(()=>{const value=read<number>('son-durak:auto-advance',5);return value===0||value===10?value:5;});
  const [lineCode,setLineCode]=useState(engine.lines.has('77A')?'77A':network.lines[0].code);
  const [district,setDistrict]=useState('Kadıköy');
  const [quickSide,setQuickSide]=useState<Side>('all');
@@ -39,6 +44,7 @@ function Experience({network,theme,toggleTheme}:{network:Network;theme:Theme;tog
  const [questions,setQuestions]=useState<Question[]>([]),[result,setResult]=useState<Result|null>(null);
  const [now,setNow]=useState(Date.now()),[toast,setToast]=useState(''),[shareText,setShareText]=useState('');
  const [day,setDay]=useState(istanbulDay());
+ const [closedHint,setClosedHint]=useState<string|null>(null);
  const questionHeading=useRef<HTMLHeadingElement>(null);
  const districts=useMemo(()=>[...new Set(network.lines.flatMap(l=>l.districts))].sort((a,b)=>a.localeCompare(b,'tr')), [network]);
  const params=useMemo(()=>new URLSearchParams(location.search),[]);
@@ -46,35 +52,35 @@ function Experience({network,theme,toggleTheme}:{network:Network;theme:Theme;tog
  const notify=useCallback((message:string)=>{setToast(message);},[]);
  useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(''),4500);return ()=>clearTimeout(t);},[toast]);
  useEffect(()=>{const t=setInterval(()=>setDay(istanbulDay()),15000);return ()=>clearInterval(t);},[]);
- const saveSession=useCallback((s:Session)=>{setSession(s);const ok=write(SESSION_KEY,s);if(s.config.mode==='daily')write(`son-durak:daily:${s.day}`,s);if(!ok)notify('Tarayıcı kaydı kullanılamıyor. Bu oturumdaki ilerlemen sayfa kapanınca kaybolabilir.');},[notify]);
+ const saveSession=useCallback((s:Session)=>{setSession(s);const ok=write(SESSION_KEY,s);write(`son-durak:session:${s.id}`,s);if(s.config.mode==='daily')write(`son-durak:daily:${s.day}`,s);if(!ok)notify('Tarayıcı kaydı kullanılamıyor. Bu oturumdaki ilerlemen sayfa kapanınca kaybolabilir.');},[notify]);
  const finish=useCallback((s:Session)=>{
   const r=resultFrom(s,s.config.mode==='survival'?s.answers.length:s.config.count);
   const next=record(progress,r);setProgress(next);if(!write(PROGRESS_KEY,next))notify('Sonuç cihazına kaydedilemedi.');
-  setResult(r);setView('result');setSession(null);write(SESSION_KEY,null);
+  setResult(r);openQuiz(r.mode,r.id,true,true);setSession(null);write(SESSION_KEY,null);write(`son-durak:session:${s.id}`,null);
   if(s.config.mode==='daily')write(`son-durak:daily:${s.day}`,null);
  },[progress,notify]);
- const resume=useCallback((s:Session)=>{
+ const resume=useCallback((s:Session,replace=false)=>{
   try{
    const qs=engine.generate(s.config);
    if(s.hintedQuestionIds?.some(id=>!qs.some(q=>q.id===id)))throw new Error('Kaydedilen ipuçları doğrulanamadı.');
    if(s.answers.some((a,i)=>a.questionId!==qs[i]?.id||!qs[i].options.some(o=>o.id===a.optionId)||a.correct!==(a.optionId===qs[i].correctId)))throw new Error('Kaydedilen tur doğrulanamadı.');
-   if(s.config.mode==='daily'&&progress.daily[s.day]){setResult(progress.daily[s.day]);setView('result');return;}
-   setQuestions(qs);setSession(s);setNow(Date.now());setView('game');
+   if(s.config.mode==='daily'&&progress.daily[s.day]){setResult(progress.daily[s.day]);openQuiz('daily',progress.daily[s.day].id,true,true);return;}
+   setQuestions(qs);saveSession(s);setNow(Date.now());openQuiz(s.config.mode,s.id,false,replace);
    if(s.deadline!==null&&s.deadline<=Date.now())finish(s);
-  }catch(e){notify((e as Error).message);setSession(null);write(SESSION_KEY,null);}
- },[engine,finish,notify,progress.daily]);
+  }catch(e){notify((e as Error).message);setSession(null);write(SESSION_KEY,null);setRouteError((e as Error).message);}
+ },[engine,finish,notify,progress.daily,saveSession]);
  const start=useCallback((mode:Mode,override?:Partial<Config>)=>{
-  if(mode==='daily'&&progress.daily[day]){setResult(progress.daily[day]);setView('result');return;}
+  if(mode==='daily'&&progress.daily[day]){setResult(progress.daily[day]);openQuiz('daily',progress.daily[day].id,true);return;}
   const saved=mode==='daily'?read<Session|null>(`son-durak:daily:${day}`,null):null;
   if(validSession(saved,network)){resume(saved);return;}
   const seed=mode==='daily'?dailySeed(day,network.version):crypto.randomUUID();
   const config:Config={mode,difficulty:mode==='daily'?'easy':difficulty,seed,count:mode==='daily'?5:mode==='survival'?50:10,...(mode==='expert'?{line:lineCode}:{}),...(mode==='district'?{district}:{}),...(mode==='quick'?{districts:quickDistricts(quickSide,quickRegion)}:{}),...override};
   try{
    const qs=engine.generate(config);const s:Session={id:crypto.randomUUID(),config,version:network.version,engineVersion:ENGINE_VERSION,day,answers:[],index:0,deadline:mode==='quick'?Date.now()+5*60*1000:null,startedAt:Date.now()};
-   setQuestions(qs);saveSession(s);setNow(Date.now());setView('game');setShareText('');
+   setQuestions(qs);saveSession(s);setNow(Date.now());openQuiz(s.config.mode,s.id);setShareText('');
   }catch(e){notify((e as Error).message);}
  },[day,difficulty,lineCode,district,quickSide,quickRegion,engine,network,progress.daily,resume,saveSession,notify]);
- useEffect(()=>{if(view!=='game'||!session?.deadline)return;const t=setInterval(()=>{const time=Date.now();setNow(time);if(time>=session.deadline!)finish(session);},200);return ()=>clearInterval(t);},[view,session,finish]);
+ useEffect(()=>{if(view!=='game'||routeError||session?.id!==route.id||!session?.deadline)return;const t=setInterval(()=>{const time=Date.now();setNow(time);if(time>=session.deadline!)finish(session);},200);return ()=>clearInterval(t);},[view,route.id,routeError,session,finish]);
  const choose=useCallback((id:string)=>{
   if(!session||view!=='game'||session.answers[session.index])return;
   if(session.deadline&&Date.now()>=session.deadline){finish(session);return;}
@@ -85,7 +91,9 @@ function Experience({network,theme,toggleTheme}:{network:Network;theme:Theme;tog
   if(!session||view!=='game'||session.answers[session.index])return;
   if(session.deadline&&Date.now()>=session.deadline){finish(session);return;}
   const q=questions[session.index];
-  if(session.hintedQuestionIds?.includes(q.id))return;
+  const key=`${session.id}:${q.id}`;
+  if(session.hintedQuestionIds?.includes(q.id)){setClosedHint(previous=>previous===key?null:key);return;}
+  setClosedHint(null);
   saveSession({...session,hintedQuestionIds:[...(session.hintedQuestionIds||[]),q.id]});
  },[session,view,questions,saveSession,finish]);
  const next=useCallback(()=>{
@@ -107,7 +115,7 @@ function Experience({network,theme,toggleTheme}:{network:Network;theme:Theme;tog
   return ()=>ctrl.abort();
  },[view,session,questions]);
  const copy=async(text:string)=>{setShareText(text);try{await navigator.clipboard.writeText(text);notify('Panoya kopyalandı.');}catch{notify('Metni aşağıdaki kutudan kopyalayabilirsin.');}};
- const duelLink=(seed:string,d:Difficulty,score?:number)=>{const url=new URL(location.origin+location.pathname);url.search=new URLSearchParams({duel:seed,v:network.version,ev:ENGINE_VERSION,d,...(score===undefined?{}:{score:String(score)})}).toString();return url.toString();};
+ const duelLink=(seed:string,d:Difficulty,score?:number)=>{const url=new URL('/',location.origin);url.search=new URLSearchParams({duel:seed,v:network.version,ev:ENGINE_VERSION,d,...(score===undefined?{}:{score:String(score)})}).toString();return url.toString();};
  const shareResult=()=>{
   if(!result)return;
   const squares=result.answers.map(a=>a.correct?'🟩':'⬛').join('')+'⬜'.repeat(Math.max(0,result.total-result.answers.length));
@@ -116,52 +124,72 @@ function Experience({network,theme,toggleTheme}:{network:Network;theme:Theme;tog
  };
  const current=session?questions[session.index]:undefined;
  const hint=useMemo(()=>current?questionHint(engine,current):null,[engine,current]);
- const hintOpen=!!current&&!!session?.hintedQuestionIds?.includes(current.id);
+ const hintUsed=!!current&&!!session?.hintedQuestionIds?.includes(current.id);
+ const hintOpen=hintUsed&&closedHint!==`${session?.id}:${current?.id}`;
  const answer=session?.answers[session.index];
+ const feedbackRef=useFeedbackScroll(view==='game'&&!routeError&&session&&session.id===route.id&&answer?`${session.id}:${session.index}`:null);
  const correct=session?.answers.filter(a=>a.correct).length||0;
  const seconds=session?.deadline?Math.max(0,Math.ceil((session.deadline-now)/1000)):null;
  const completed=!!progress.daily[day];
  const activeStreak=progress.lastDay===day||progress.lastDay===istanbulDay(new Date(Date.now()-86400000))?progress.streak:0;
- const nav=(target:typeof view)=>{setView(target);setShareText('');};
+
+ // Restore only on navigation; answer updates must not replay the saved question.
+ useEffect(()=>{
+  setRouteError('');
+  if(!route.id||!route.mode)return;
+  const completed=progress.results.find(r=>r.id===route.id)??Object.values(progress.daily).find(r=>r.id===route.id);
+  if(completed){
+   if(completed.mode!==route.mode){setRouteError('Tur kimliği bu oyun moduna ait değil.');return;}
+   setResult(completed);openQuiz(completed.mode,completed.id,true,true);return;
+  }
+  const saved=session?.id===route.id?session:read<Session|null>(`son-durak:session:${route.id}`,null);
+  if(!validSession(saved,network)||saved.config.mode!==route.mode){setRouteError('Bu tur bu tarayıcıda bulunamadı. Oyun alanından yeni bir tur başlatabilirsin.');return;}
+  resume(saved,true);
+ },[route.path,network,engine]);
+ const nav=(target:PageView)=>{navigate(target);setShareText('');};
  return <div className="app-shell"><a className="skip-link" href="#main-content">İçeriğe geç</a>
   <aside className="sidebar">
    <button className="brand" onClick={()=>nav('home')} aria-label="Son Durak ana sayfa"><span className="brand-icon"><BusFront size={26}/></span><span>son durak<span className="brand-sub">İstanbul, oyun alanın.</span></span></button>
    <div className="sidebar-label">KEŞFE ÇIK</div>
    <nav className="main-nav" aria-label="Ana menü">
-    <button className={['home','game','result'].includes(view)?'active':''} aria-label="Oyun alanı" aria-current={['home','game','result'].includes(view)?'page':undefined} onClick={()=>nav('home')}><Gamepad2 size={20}/><span>Oyun alanı</span><span className="nav-dot"/></button>
-    <button className={view==='explore'?'active':''} aria-label="Hatları keşfet" aria-current={view==='explore'?'page':undefined} onClick={()=>nav('explore')}><Route size={20}/><span>Hatları keşfet</span></button>
-    <button className={view==='progress'?'active':''} aria-label="Yolculuğum" aria-current={view==='progress'?'page':undefined} onClick={()=>nav('progress')}><Trophy size={20}/><span>Yolculuğum</span></button>
+    <a className={['home','game','result'].includes(view)?'active':''} aria-label="Oyun alanı" aria-current={['home','game','result'].includes(view)?'page':undefined} href={PAGE_PATHS.home} onClick={event=>handlePageLink(event,()=>nav('home'))}><Gamepad2 size={20}/><span>Oyun alanı</span><span className="nav-dot"/></a>
+    <a className={view==='explore'?'active':''} aria-label="Hatları keşfet" aria-current={view==='explore'?'page':undefined} href={PAGE_PATHS.explore} onClick={event=>handlePageLink(event,()=>nav('explore'))}><Route size={20}/><span>Hatları keşfet</span></a>
+    <a className={view==='progress'?'active':''} aria-label="Yolculuğum" aria-current={view==='progress'?'page':undefined} href={PAGE_PATHS.progress} onClick={event=>handlePageLink(event,()=>nav('progress'))}><Trophy size={20}/><span>Yolculuğum</span></a>
    </nav>
-   <div className="sidebar-ticket"><Ticket size={22}/><strong>Her durak bir hikâye.</strong><p>İstanbul’u bildiğin yollardan bir de böyle keşfet.</p><span>34 <span>İSTANBUL</span></span></div>
+
    <button className={`source-nav ${view==='data'?'active':''}`} onClick={()=>nav('data')}><Database size={18}/> Veri ve kaynaklar</button>
    <div className="sidebar-bottom"><span className="local-dot"/> Yerel sürüm <span>v1.0</span></div>
   </aside>
   <div className="workspace">
    <header className="topbar"><div className="breadcrumb"><span className="breadcrumb-city">İstanbul</span> <ChevronRight size={14}/><strong>{view==='explore'?'Hatları keşfet':view==='progress'?'Yolculuğum':view==='data'?'Veri ve kaynaklar':view==='about'?'Hakkımızda':'Oyun alanı'}</strong></div><div className="topbar-right"><button className="theme-toggle" type="button" aria-label="Koyu tema" aria-pressed={theme==='dark'} title={theme==='dark'?'Açık temaya geç':'Koyu temaya geç'} onClick={toggleTheme}>{theme==='dark'?<Sun size={19}/>:<Moon size={19}/>}</button><span className="streak"><Flame size={17}/>{activeStreak} <span>gün seri</span></span><button className="profile" onClick={()=>nav('progress')}><span className="avatar">{rank(progress.xp)[0]}</span><span>{rank(progress.xp)}<small>{number(progress.xp)} XP</small></span></button></div></header>
    <main id="main-content" tabIndex={-1} className={`main-content ${view==='game'?'game-main':view==='home'?'home-main':''}`}>
+   {(view==='notfound'||routeError)&&<RouteNotice error={routeError} onHome={()=>nav('home')}/> }
+   {view==='game'&&!routeError&&(!session||session.id!==route.id||!current)&&<RouteNotice loading onHome={()=>nav('home')}/> }
    {view==='home'&&<>
     <HomeHeading/>
     {challenge&&<div className={`notice ${challenge.valid?'challenge':'error'}`}><Users size={23}/><div><strong>{challenge.valid?'Düelloya davetlisin!':'Bu düello bağlantısı açılamıyor.'}</strong><p>{challenge.valid?`Aynı 10 soruyu çöz, sonuçlarını karşılaştır.${challenge.hasScore&&Number.isFinite(challenge.score)?` Rakibinin paylaştığı puan: ${challenge.score}.`:''}`:'Bağlantının veri veya oyun sürümü bu cihazdakiyle eşleşmiyor. Aynı proje sürümünü kullanın.'}</p></div>{challenge.valid&&<button className="primary small" onClick={()=>start('duel',{seed:challenge.seed,difficulty:challenge.difficulty})}>Düelloyu başlat</button>}</div>}
     {session&&<div className="resume-bar"><Ticket size={20}/><span>Yarım kalan bir {MODE_NAMES[session.config.mode]} turun var.</span><button onClick={()=>resume(session)}>Devam et</button></div>}
-    <HomeModes network={network} difficulty={difficulty} setDifficulty={setDifficulty} quickSide={quickSide} setQuickSide={setQuickSide} quickRegion={quickRegion} setQuickRegion={setQuickRegion} districts={districts} lineCode={lineCode} setLineCode={setLineCode} district={district} setDistrict={setDistrict} completed={completed} start={start} nav={nav}/>
+    <HomeModes network={network} difficulty={difficulty} setDifficulty={setDifficulty} quickSide={quickSide} setQuickSide={setQuickSide} quickRegion={quickRegion} setQuickRegion={setQuickRegion} districts={districts} lineCode={lineCode} setLineCode={setLineCode} district={district} setDistrict={setDistrict} completed={completed} start={start}/>
    </>}
-   {view==='game'&&session&&current&&<>
+   {view==='game'&&!routeError&&session&&session.id===route.id&&current&&<>
     <div className="game-top"><button className="text-button" onClick={()=>nav('home')}><X size={18}/> Ara ver</button><span className="chip">{MODE_NAMES[session.config.mode]} · {session.config.difficulty==='hard'?'Zor':'Kolay'}</span><div className={`timer ${seconds!==null&&seconds<=15?'urgent':''}`}>{seconds!==null?<><Clock3 size={20}/>{Math.floor(seconds/60)}:{String(seconds%60).padStart(2,'0')}<small>dk:sn</small></>:session.config.mode==='survival'?<><Heart size={20}/>{3-session.answers.filter(a=>!a.correct).length}<small>can</small></>:<><Trophy size={19}/>{correct* (session.config.difficulty==='hard'?150:100)}</>}</div></div>
     <div className="question-progress"><span>SORU {String(session.index+1).padStart(2,'0')} <small>/ {session.config.count}</small></span><div><i style={{width:`${((session.index+1)/session.config.count)*100}%`}}/></div><span>{correct} doğru</span></div>
-    <section className="question-card"><div className="question-kicker"><span><Route size={16}/>{KIND_LABELS[current.kind]}</span><span>{session.config.difficulty==='hard'?150:100} PUAN</span></div><h1 ref={questionHeading} tabIndex={-1}>{current.prompt}</h1>
+    <div className="game-question-layout"><section className="question-card"><div className="question-kicker"><span><Route size={16}/>{KIND_LABELS[current.kind]}</span><span>{session.config.difficulty==='hard'?150:100} PUAN</span></div><h1 ref={questionHeading} tabIndex={-1}>{current.prompt}</h1>
     {current.kind==='map'&&<RouteMap network={network} stopIds={current.stopIds} reveal={!!answer}/>}
-    {!answer&&<div className="hint-actions"><button className="hint-button" onClick={openHint} disabled={hintOpen} aria-expanded={hintOpen} aria-controls={hintOpen?'question-hint-panel':undefined}><Lightbulb size={18}/>{hintOpen?'İpucu açıldı':'İpucu al'}</button><span>Puan düşmez.{session.config.mode==='quick'?' Süre devam eder.':''}</span></div>}
-    {!answer&&hintOpen&&hint&&<HintPanel hint={hint} network={network}/>}
+    {!answer&&<div className="hint-actions"><button className="hint-button" onClick={openHint} aria-expanded={hintOpen} aria-controls={hintOpen?'question-hint-panel':undefined}><Lightbulb size={18}/>{hintOpen?'İpucunu kapat':hintUsed?'İpucunu aç':'İpucu al'}</button><span><CheckCircle2 size={14} aria-hidden="true"/>Puan düşmez.{session.config.mode==='quick'?' Süre devam eder.':''}</span></div>}
+    {!answer&&hint&&!hint.map&&<HintReveal key={`${session.id}:${current.id}`} open={hintOpen}><HintPanel hint={hint} network={network}/></HintReveal>}
     <div className="answer-grid">{current.options.map((option,i)=>{const correctOption=!!answer&&option.id===current.correctId,wrong=!!answer&&answer.optionId===option.id&&!answer.correct;return <button key={option.id} className={`answer-option ${correctOption?'correct':''} ${wrong?'wrong':''}`} disabled={!!answer} onClick={()=>choose(option.id)}><span className="option-letter">{'ABCD'[i]}</span><span>{option.label}</span>{correctOption?<CheckCircle2 size={22}/>:wrong?<X size={22}/>:<span className="key-hint">{i+1}</span>}</button>;})}</div>
     {!answer&&<div className="question-hint"><Info size={15}/> Bir doğru cevap var. İstersen klavyede 1–4 tuşlarını kullan.</div>}
-    {answer&&<div className={`answer-feedback ${answer.correct?'success':'incorrect'}`} role="status"><div className="feedback-title">{answer.correct?<CheckCircle2 size={23}/>:<Info size={23}/>}<strong>{answer.correct?'Doğru duraktasın!':'Bu kez durağı kaçırdın.'}</strong>{answer.correct&&<span>+{session.config.difficulty==='hard'?150:100} puan</span>}</div><p>{current.explanation}</p><button className="primary" onClick={next}>{session.index+1===questions.length||(session.config.mode==='survival'&&session.answers.filter(a=>!a.correct).length>=3)?'Sonucumu gör':'Sıradaki soru'}<ChevronRight size={18}/></button></div>}
-    {answer&&<AutoAdvance key={`${session.id}:${current.id}`} delay={autoDelay} onDelayChange={value=>{setAutoDelay(value);write('son-durak:auto-advance',value);}} onNext={next}/>}
+    {answer&&<div ref={feedbackRef} className={`answer-feedback ${answer.correct?'success':'incorrect'}`} role="status"><div className="feedback-title">{answer.correct?<CheckCircle2 size={23}/>:<Info size={23}/>}<strong>{answer.correct?'Doğru duraktasın!':'Bu kez durağı kaçırdın.'}</strong>{answer.correct&&<span>+{session.config.difficulty==='hard'?150:100} puan</span>}</div><p>{current.explanation}</p></div>}
+    {answer&&<AutoAdvance key={`${session.id}:${current.id}`} label={session.index+1===questions.length||(session.config.mode==='survival'&&session.answers.filter(a=>!a.correct).length>=3)?'Sonucumu gör':'Sonraki soru'} onNext={next}/>}
     </section>
+    {!answer&&hint?.map&&<HintReveal key={`${session.id}:${current.id}`} open={hintOpen}><HintPanel hint={hint} network={network}/></HintReveal>}
+    </div>
     {answer&&current.kind!=='map'&&<div className="explanation-map"><div className="section-heading"><h2>Duraklara yakından bak</h2><span>{current.kind==='not-line'?current.correctId:current.lineCode} · İETT</span></div><RouteMap network={network} stopIds={current.stopIds} connect={current.kind!=='not-line'} excludedLine={current.kind==='not-line'?engine.lines.get(current.correctId):undefined} labels={current.kind==='not-line'?[`Sorulan durak · ${network.stops[current.stopIds[0]].name}`]:undefined}/></div>}
     {session.config.mode==='quick'&&<p className="quiet centered">5 dakikalık süre, açıklamalar okunurken ve ara verildiğinde de devam eder.</p>}
     {session.config.mode==='duel'&&<div className="duel-tools"><button className="secondary" onClick={()=>void copy(duelLink(session.config.seed,session.config.difficulty))}><Copy size={17}/> Aynı soruların bağlantısını kopyala</button><p>Arkadaşın aynı veri sürümünü açmalı. localhost bağlantıları yalnızca açıldıkları cihazda çalışır.</p></div>}
    </>}
-   {view==='result'&&result&&<section className="results-page"><div className="eyebrow">{MODE_NAMES[result.mode].toLocaleUpperCase('tr')} TAMAMLANDI</div><div className="result-icon"><Trophy size={42}/></div><h1>{result.correct===result.total?'İstanbul senden sorulur.':result.correct>=result.total/2?'Güzel bir yolculuktu.':'Her tur yeni bir keşif.'}</h1><p>{result.correct===result.total?'Bütün durakları doğru bildin.':`${result.total} sorudan ${result.correct} doğru. Bir sonraki turda yeni yollar seni bekliyor.`}</p><div className="result-stats"><div><strong>{number(result.score)}</strong><span>toplam puan</span></div><div><strong>{result.correct}<small>/{result.total}</small></strong><span>doğru cevap</span></div><div><strong>+{result.xp}</strong><span>kazanılan XP</span></div></div><p className="result-hints"><Lightbulb size={17}/>{result.hintsUsed||0} soruda ipucu kullanıldı.</p><div className="result-grid" aria-label="Cevapların özeti">{Array.from({length:result.total},(_,i)=><span key={i} className={result.answers[i]?.correct?'good':result.answers[i]?'bad':'empty'} title={`Soru ${i+1}: ${result.answers[i]?.correct?'Doğru':result.answers[i]?'Yanlış':'Yanıtlanmadı'}`}>{result.answers[i]?.correct?<Check size={18}/>:result.answers[i]?<X size={18}/>:i+1}</span>)}</div><div className="result-actions"><button className="primary" onClick={()=>start(result.mode==='daily'?'quick':result.mode)}>Yeni tur</button><button className="secondary" onClick={shareResult}><Share2 size={17}/> Sonucunu paylaş</button></div><button className="secondary" onClick={()=>nav('home')}><House size={18}/> Ana sayfaya dön</button>{result.mode==='duel'&&challenge?.hasScore&&Number.isFinite(challenge.score)&&result.seed===challenge.seed&&<p className="notice">Sen: {result.score} puan · Paylaşılan rakip puanı: {challenge.score} (beyan edilen sonuç)</p>}<div className="result-foot"><Award size={19}/>{rank(progress.xp)} · {number(progress.xp)} XP<span>İlerlemen bu tarayıcıda saklanıyor.</span></div></section>}
+   {view==='result'&&!routeError&&result&&result.id===route.id&&<section className="results-page"><div className="eyebrow">{MODE_NAMES[result.mode].toLocaleUpperCase('tr')} TAMAMLANDI</div><div className="result-icon"><Trophy size={42}/></div><h1>{result.correct===result.total?'İstanbul senden sorulur.':result.correct>=result.total/2?'Güzel bir yolculuktu.':'Her tur yeni bir keşif.'}</h1><p>{result.correct===result.total?'Bütün durakları doğru bildin.':`${result.total} sorudan ${result.correct} doğru. Bir sonraki turda yeni yollar seni bekliyor.`}</p><div className="result-stats"><div><strong>{number(result.score)}</strong><span>toplam puan</span></div><div><strong>{result.correct}<small>/{result.total}</small></strong><span>doğru cevap</span></div><div><strong>+{result.xp}</strong><span>kazanılan XP</span></div></div><p className="result-hints"><Lightbulb size={17}/>{result.hintsUsed||0} soruda ipucu kullanıldı.</p><div className="result-grid" aria-label="Cevapların özeti">{Array.from({length:result.total},(_,i)=><span key={i} className={result.answers[i]?.correct?'good':result.answers[i]?'bad':'empty'} title={`Soru ${i+1}: ${result.answers[i]?.correct?'Doğru':result.answers[i]?'Yanlış':'Yanıtlanmadı'}`}>{result.answers[i]?.correct?<Check size={18}/>:result.answers[i]?<X size={18}/>:i+1}</span>)}</div><div className="result-actions"><button className="primary" onClick={()=>start(result.mode==='daily'?'quick':result.mode)}>Yeni tur</button><button className="secondary" onClick={shareResult}><Share2 size={17}/> Sonucunu paylaş</button></div><button className="secondary" onClick={()=>nav('home')}><House size={18}/> Ana sayfaya dön</button>{result.mode==='duel'&&challenge?.hasScore&&Number.isFinite(challenge.score)&&result.seed===challenge.seed&&<p className="notice">Sen: {result.score} puan · Paylaşılan rakip puanı: {challenge.score} (beyan edilen sonuç)</p>}<div className="result-foot"><Award size={19}/>{rank(progress.xp)} · {number(progress.xp)} XP<span>İlerlemen bu tarayıcıda saklanıyor.</span></div></section>}
    {view==='explore'&&<Explorer network={network} initialCode={lineCode}/>}
    {view==='progress'&&<ProgressView progress={progress} streak={activeStreak}/>}
    {view==='data'&&<DataView network={network}/>}

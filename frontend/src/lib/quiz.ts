@@ -1,5 +1,5 @@
 import type { Config, Kind, Line, Network, Option, Pattern, Question, Stop } from './types';
-export const ENGINE_VERSION = '4';
+export const ENGINE_VERSION = '6';
 export const KIND_LABELS: Record<Kind,string> = { 'not-stop':'Durak dedektifi', 'not-line':'Hattı yakala', endpoints:'Nereden nereye?', direct:'Rota bulucu', common:'Yollar kesişince', map:'Haritayı oku', order:'Durak sırası', 'at-stop':'Bu duraktan geçenler', transfer:'Aktarma zamanı' };
 export function random(seed: string) { let h=2166136261; for (const c of seed) h=Math.imul(h^c.charCodeAt(0),16777619); return () => { h+=0x6D2B79F5; let t=h; t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61); return ((t^(t>>>14))>>>0)/4294967296; }; }
 export function shuffled<T>(items: readonly T[], rng:()=>number): T[] { const a=[...items]; for(let i=a.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
@@ -19,6 +19,7 @@ export class QuizEngine {
   lines = new Map<string,Line>(); groups = new Map<string,Stop>(); lineGroups = new Map<string,Set<string>>(); groupList:string[]; districtGroups = new Map<string,string[]>();
   private stopLineCodes = new Map<string,string[]>();
   private nearbyCache = new Map<string,{code:string;distance:number}[]>();
+  private nearbyStopCache = new Map<string,{group:string;distance:number}[]>();
   constructor(public network:Network) {
     for(const stop of Object.values(network.stops)) if(!this.groups.has(stop.group)) this.groups.set(stop.group,stop);
     this.groupList=[...this.groups.keys()].sort();
@@ -36,6 +37,19 @@ export class QuizEngine {
   label(group:string){const s=this.groups.get(group)!;return `${s.name}${s.district ? ` · ${s.district}` : ''}`;}
   serves(code:string,group:string){return this.lineGroups.get(code)?.has(group)??false;}
   ordered(code:string,groups:string[]){return this.lines.get(code)?.patterns.some(p=>{const seq=p.stops.map(id=>this.network.stops[id].group);let after=-1;return groups.every(g=>{after=seq.indexOf(g,after+1);return after>=0;});})??false;}
+  private nearbyStopGroups(group:string){
+    const cached=this.nearbyStopCache.get(group);if(cached)return cached;
+    const anchor=this.groups.get(group);
+    if(!anchor?.district||anchor.lat===null||anchor.lon===null)return [];
+    const nearby=this.groupList.flatMap(id=>{
+      const stop=this.groups.get(id)!;
+      if(id===group||!stop.district||stop.lat===null||stop.lon===null||ANATOLIAN_DISTRICTS.has(stop.district)!==ANATOLIAN_DISTRICTS.has(anchor.district))return [];
+      const distance=distanceKm(anchor,stop);
+      return distance<=10?[{group:id,distance}]:[];
+    }).sort((a,b)=>a.distance-b.distance||a.group.localeCompare(b.group,'en'));
+    this.nearbyStopCache.set(group,nearby);
+    return nearby;
+  }
   private nearbyNonServingLines(group:string){
     const cached=this.nearbyCache.get(group);if(cached)return cached;
     const anchor=this.groups.get(group);
@@ -117,22 +131,25 @@ export class QuizEngine {
     const local=(gs:string[])=>scope?gs.filter(g=>scope.includes(this.groups.get(g)!.district)):gs;
     const regionalLines=config.districts?this.network.lines.filter(l=>l.districts.some(d=>config.districts!.includes(d))):this.network.lines;
     const allowed=config.districts?new Set(regionalLines.map(l=>l.code)):undefined;
-    const chooseWrong=(candidates:string[],anchors:string[])=>{
-      if(config.difficulty==='hard'){
-        const districts=new Set(anchors.map(g=>this.groups.get(g)!.district));
-        const near=candidates.filter(g=>districts.has(this.groups.get(g)!.district));
-        return [...shuffled(near,rng),...shuffled(candidates.filter(g=>!near.includes(g)),rng)];
-      }
-      return shuffled(candidates,rng);
-    };
     let prompt='',explanation='',correctId='',options:Option[]=[],stopIds=[...pattern.stops];
     let evidence:Question['evidence']={};
     const opt=(id:string,label=id)=>({id,label});
     const served=(g:string)=>this.network.stopLines[g]||[];
     const lineOptions=(good:string[],bad:string[])=>{const a=pick(good);correctId=a;return [a,...shuffled(bad,rng).slice(0,3)].map(c=>opt(c));};
     if(kind==='not-stop'){
-      const valid=shuffled(local(lineGroups),rng).slice(0,3);if(valid.length<3)return null;
-      const wrong=chooseWrong(local(this.groupList).filter(g=>!this.serves(line.code,g)),valid)[0];if(!wrong)return null;
+      const anchors=shuffled(local(lineGroups).filter(g=>{const s=this.groups.get(g)!;return !!s.district&&s.lat!==null&&s.lon!==null;}),rng);
+      let valid:string[]=[],wrong:string|undefined;
+      search:for(const radius of NEARBY_RADII_KM)for(const anchor of anchors){
+        const nearby=this.nearbyStopGroups(anchor).filter(s=>s.distance<=radius&&(!scope||local([s.group]).length>0));
+        const servedNearby=shuffled(nearby.filter(s=>this.serves(line.code,s.group)).map(s=>s.group),rng);
+        if(servedNearby.length<2)continue;
+        valid=[anchor,...servedNearby.filter(g=>distanceKm(this.groups.get(g)!,this.groups.get(servedNearby[0])!)<=radius).slice(0,2)];
+        if(valid.length<3)continue;
+        const alternatives=nearby.filter(s=>!this.serves(line.code,s.group)&&valid.every(g=>distanceKm(this.groups.get(g)!,this.groups.get(s.group)!)<=radius));
+        wrong=pick(alternatives.slice(0,24))?.group;
+        if(wrong)break search;
+      }
+      if(!wrong)return null;
       correctId=wrong;options=[...valid,wrong].map(g=>opt(g,this.label(g)));evidence={groups:[...valid,wrong]};
       prompt=`Hangisi ${line.code} hattının duraklarından biri değildir?`;
       explanation=`${this.label(wrong)}, bu veri setindeki ${line.code} seferlerinin hiçbirinde yer almıyor. Diğer üç durak, hattın en az bir güzergâhında bulunuyor.`;
@@ -146,7 +163,13 @@ export class QuizEngine {
     } else if(kind==='endpoints'){
       if(config.district&&!local([seq[0],seq.at(-1)!]).length)return null;
       if(config.districts&&local([seq[0],seq.at(-1)!]).length!==2)return null;
-      const end=seq.at(-1)!;const wrong=chooseWrong((config.districts?local(this.groupList):this.groupList).filter(g=>g!==end&&g!==seq[0]),[end]).slice(0,3);
+      const end=seq.at(-1)!;
+      const nearby=this.nearbyStopGroups(end).filter(s=>s.group!==seq[0]&&(!config.districts||local([s.group]).length>0));
+      // Both difficulties use neighboring stops on the same bank. Sparse areas
+      // can widen locally, but never fall back to unrelated city-wide choices.
+      const radius=NEARBY_RADII_KM.find(r=>nearby.filter(s=>s.distance<=r).length>=3);
+      if(radius===undefined)return null;
+      const wrong=shuffled(nearby.filter(s=>s.distance<=radius).slice(0,24).map(s=>s.group),rng).slice(0,3);
       correctId=end;options=[end,...wrong].map(g=>opt(g,this.label(g)));evidence={groups:[seq[0],end]};
       prompt=`${line.code}, ana güzergâhında ${this.groups.get(seq[0])!.name} durağından nereye gider?`;
       explanation=`Veri setinde en fazla seferi olan güzergâh: ${this.label(seq[0])} → ${this.label(end)}. ${pattern.stops.length} durak; diğer yön ve varyantların uçları farklı olabilir.`;

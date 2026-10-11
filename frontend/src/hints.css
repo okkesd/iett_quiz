@@ -1,20 +1,59 @@
 .hint-actions { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
 .hint-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--accent-soft); color: var(--accent); font-size: .875rem; font-weight: 500; }
 .hint-button:hover:not(:disabled) { border-color: var(--accent); }
-.hint-actions > span { color: var(--muted); font-size: .75rem; line-height: 1.6; }
+.hint-actions > span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .75rem; line-height: 1.6; }
+.hint-actions > span svg { color: var(--success); flex-shrink: 0; }
+@keyframes hint-reveal { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes hint-hide { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(10px); } }
+.game-question-layout { display: grid; gap: 20px; align-items: start; }
+.game-question-layout > .question-card, .hint-slot { min-width: 0; }
+.hint-slot { animation: hint-reveal 220ms ease-out both; }
+.hint-slot[data-state='closing'] { animation: hint-hide 180ms ease-in both; pointer-events: none; }
+.hint-slot .hint-panel { margin-bottom: 0; }
+.question-card > .hint-slot { margin-bottom: 22px; }
+@media (min-width: 1200px) {
+ .game-main:has(.game-question-layout > .hint-slot) { max-width: 1440px; }
+ .game-question-layout:has(> .hint-slot) { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+ .game-question-layout > .hint-slot .hint-panel { height: 100%; }
+ .hint-slot .hint-panel .route-map { height: 360px; }
+}
 .hint-panel { padding: 22px; margin-bottom: 22px; border: 1px solid var(--line); border-radius: 15px; background: var(--accent-soft); }
 .hint-panel h2 { display: flex; gap: 8px; align-items: center; font-size: 1rem; color: var(--accent); letter-spacing: -.01em; }
 .hint-panel p { font-size: .94rem; color: var(--ink); line-height: 1.75; margin-top: 10px; }
 .hint-panel .map-wrap { margin-top: 17px; margin-bottom: 0; }
 .hint-panel .route-map { height: 260px; }
 .results-page .result-hints { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: .875rem; margin: 0 0 22px; }
-.auto-advance { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); font-size: .8rem; }
-.auto-advance label { display: flex; align-items: center; gap: 10px; }
-.auto-advance select { padding: 10px; min-height: 44px; }
-.auto-advance > span { color: var(--muted); }
-.auto-advance .secondary { min-height: 44px; padding: 9px 14px; font-size: .8rem; }
+.auto-advance { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 20px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--raised); font-size: .8rem; }
+.auto-next { flex: 1; min-width: 150px; min-height: 44px; justify-content: space-between; }
+.auto-countdown { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.auto-timer { position: relative; display: grid; place-items: center; width: 44px; height: 44px; color: var(--accent); flex-shrink: 0; }
+.auto-timer > svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke-width: 2.5; }
+.auto-timer-track { stroke: var(--line); }
+.auto-timer-progress { stroke: currentColor; stroke-linecap: round; transition: stroke-dashoffset .2s; }
+.auto-timer strong { display: flex; align-items: baseline; gap: 2px; font-size: .85rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.auto-timer small { font-size: .55rem; font-weight: 500; }
+.auto-advance[data-state='paused'] .auto-timer { color: var(--muted); }
+.auto-pause { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 10px 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; color: var(--ink); font-size: .75rem; font-weight: 550; }
+.auto-pause:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 650px) {
+ .auto-advance { padding: 14px; gap: 12px; }
+ .auto-next { flex-basis: 100%; }
+ .auto-countdown { width: 100%; gap: 8px; justify-content: space-between; }
+ .auto-pause { margin-left: auto; padding-inline: 10px; gap: 6px; font-size: .72rem; }
+
  .hint-actions { gap: 8px 12px; }
- .hint-panel { padding: 17px 14px; }
+ .hint-actions > span svg { color: var(--success); flex-shrink: 0; }
+@keyframes hint-reveal { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes hint-hide { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(10px); } }
+.game-question-layout { display: grid; gap: 20px; align-items: start; }
+.game-question-layout > .question-card, .hint-slot { min-width: 0; }
+.hint-slot { animation: hint-reveal 220ms ease-out both; }
+.hint-slot[data-state='closing'] { animation: hint-hide 180ms ease-in both; pointer-events: none; }
+.hint-slot .hint-panel { margin-bottom: 0; }
+.question-card > .hint-slot { margin-bottom: 22px; }
+@media (min-width: 1200px) {
+ .game-question-layout:has(> .hint-slot) { grid-template-columns: minmax(0, 1fr) 320px; }
+}
+.hint-panel { padding: 17px 14px; }
  .hint-panel .route-map { height: 225px; }
 }
