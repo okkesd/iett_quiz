@@ -1,4 +1,4 @@
-const CACHE='son-durak-v7';
+const CACHE='son-durak-v8';
 self.addEventListener('install',event=>{
  event.waitUntil((async()=>{
   const cache=await caches.open(CACHE);

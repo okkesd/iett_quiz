@@ -4,7 +4,7 @@
   --surface: #fff;
   --raised: #f0f2f5;
   --ink: #202631;
-  --muted: #69727f;
+  --muted: #505b6b;
   --line: #e4e7ec;
   --accent: #23845b;
   --accent-hover: #196d49;
@@ -29,7 +29,7 @@ html[data-theme='dark'] {
   --surface: #1c1f26;
   --raised: #272b34;
   --ink: #f0f2f7;
-  --muted: #a2aaba;
+  --muted: #bdc6d5;
   --line: #333844;
   --accent: #7bd4a5;
   --accent-hover: #a1e5be;
@@ -50,7 +50,8 @@ html[data-theme='dark'] {
 .route-map .route-path, .route-map .route-stop { stroke: var(--map-route); }
 .route-map .route-stop { fill: var(--map-stop); }
 .route-map .route-endpoint { fill: var(--map-endpoint); }
-html[data-theme='dark'] .leaflet-tile-pane { filter: brightness(.72) saturate(.65); }
+html[data-theme='dark'] .route-map { background: #151b22; }
+html[data-theme='dark'] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.8) contrast(.9) saturate(.5); }
 html[data-theme='dark'] .leaflet-control a, html[data-theme='dark'] .leaflet-tooltip, html[data-theme='dark'] .leaflet-control-attribution { background: var(--surface); color: var(--ink); border-color: var(--line); }
 @media (prefers-reduced-transparency: reduce) {
   :root { --glass: #f9fafc; --sidebar-glass: #eff2f7; }
@@ -66,3 +67,8 @@ html[data-theme='dark'] .leaflet-control a, html[data-theme='dark'] .leaflet-too
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   button:active:not(:disabled) { transform: none; }
 }
+
+.bus-stop-marker { background: none; border: none; }
+.bus-stop-pin { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border: 2px solid var(--surface); border-radius: 11px; background: var(--accent); color: var(--surface); box-shadow: 0 2px 7px #0004; }
+.bus-stop-pin::after { content: ""; position: absolute; left: 11px; bottom: -6px; width: 8px; height: 8px; transform: rotate(45deg); background: var(--accent); border-right: 2px solid var(--surface); border-bottom: 2px solid var(--surface); }
+.bus-stop-pin svg { stroke: currentColor; fill: none; }

@@ -60,13 +60,14 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Build and push web image
+      - name: Build web image
         if: env.OPERATION == 'deploy'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: frontend/Dockerfile
-          push: true
+          push: false
+          load: true
           platforms: ${{ env.DOCKER_PLATFORM }}
           tags: ${{ env.IMAGE_PREFIX }}/son-durak-web:${{ env.RELEASE_TAG }}
           build-args: |
@@ -75,11 +76,21 @@ jobs:
             AUTH_MODE=supabase
           cache-from: type=gha,scope=son-durak-web
           cache-to: type=gha,mode=max,scope=son-durak-web
+      - name: Scan image for vulnerabilities
+        if: env.OPERATION == 'deploy'
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: ${{ env.IMAGE_PREFIX }}/son-durak-web:${{ env.RELEASE_TAG }}
+          only-severities: critical
+          exit-code: true
       - name: Test image behind an isolated nginx proxy
         if: env.OPERATION == 'deploy'
         run: |
-          docker pull --platform "$DOCKER_PLATFORM" "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG"
           bash deploy/scripts/smoke-test.sh "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG" "$QUIZ_DOMAIN"
+      - name: Push image after successful checks
+        if: env.OPERATION == 'deploy'
+        run: docker push "$IMAGE_PREFIX/son-durak-web:$RELEASE_TAG"
       - name: Package release
         run: |
           umask 077

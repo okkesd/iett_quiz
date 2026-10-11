@@ -1,3 +1,6 @@
+import { useFeedbackScroll } from '../lib/useFeedbackScroll';
+import { usePageRoute, openQuiz, PAGE_PATHS, handlePageLink, type PageView } from '../lib/routing';
+import RouteNotice from '../components/RouteNotice';
 import HomeHeading from '../components/HomeHeading';
 import AppFooter from '../components/AppFooter';
 import { useCallback,useEffect,useMemo,useRef,useState } from 'react';
@@ -14,10 +17,10 @@ import RouteMap from '../components/RouteMap';
 import { AboutView, DataView, Explorer } from '../LocalApp';
 import Auth from './Auth';
 import PointMap from './PointMap';
+import HintReveal from '../components/HintReveal';
 import Account from './Account';
 import { api, authClient, configurationError, localAuth, localUserId, MODE_NAMES, type Catalog, type Feedback, type HistoryItem, type ProfileData, type ServerQuestion, type ServerSession } from './api';
 
-type View='home'|'game'|'result'|'explore'|'progress'|'data'|'about';
 const formatDate=(date:string)=>new Intl.DateTimeFormat('tr-TR',{dateStyle:'medium',timeZone:'Europe/Istanbul'}).format(new Date(date));
 export default function ServerApp(){
  const {theme,toggleTheme}=useTheme();
@@ -48,15 +51,18 @@ export default function ServerApp(){
 }
 
 function ServerExperience({userId,network,theme,toggleTheme}:{userId:string;network:Network;theme:Theme;toggleTheme:()=>void}){
- const [view,setView]=useState<View>('home');
- useEffect(()=>{window.scrollTo({top:0,behavior:'instant'});},[view]);
+ const {route,navigate}=usePageRoute();
+ const view=route.view;
+ const [routeError,setRouteError]=useState(''),[routeLoading,setRouteLoading]=useState(false),[routeRetry,setRouteRetry]=useState(0);
+ useEffect(()=>{window.scrollTo({top:0,behavior:'instant'});},[route.path]);
  const [catalog,setCatalog]=useState<Catalog|null>(null),[profile,setProfile]=useState<ProfileData|null>(null),[history,setHistory]=useState<HistoryItem[]>([]);
  const [difficulty,setDifficulty]=useState<Difficulty>('easy'),[lineCode,setLineCode]=useState('77A'),[district,setDistrict]=useState('Kadıköy');
  const [quickSide,setQuickSide]=useState<Side>('all'),[quickRegion,setQuickRegion]=useState('');
  const [session,setSession]=useState<ServerSession|null>(null),[question,setQuestion]=useState<ServerQuestion|null>(null),[feedback,setFeedback]=useState<Feedback|null>(null);
+ const feedbackRef=useFeedbackScroll(view==='game'&&!routeLoading&&!routeError&&session&&session.id===route.id&&feedback?`${session.id}:${feedback.question_index}`:null);
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[shareText,setShareText]=useState('');
  const [tick,setTick]=useState(Date.now()),[clockOffset,setClockOffset]=useState(0);
- const [autoDelay,setAutoDelay]=useState<0|5|10>(()=>{const v=read<number>('son-durak:auto-advance',5);return v===0||v===10?v:5;});
+ const [closedHint,setClosedHint]=useState<string|null>(null);
  const requestBusy=useRef(false),mounted=useRef(true),questionHeading=useRef<HTMLHeadingElement>(null);
  const expiryAttempt=useRef('');
  const storageKey=`son-durak:server-session:${userId}`;
@@ -89,13 +95,39 @@ function ServerExperience({userId,network,theme,toggleTheme}:{userId:string;netw
  },[storageKey]);
  const complete=useCallback(async(id:string)=>{
   const next=await api<ServerSession>(`/v1/sessions/${id}/finish`,{method:'POST'});
-  apply(next);setView('result');void refresh().catch(e=>{if(mounted.current)setError((e as Error).message);});
+  apply(next);openQuiz(next.mode,next.id,true,true);void refresh().catch(e=>{if(mounted.current)setError((e as Error).message);});
  },[apply,refresh]);
  const resume=useCallback((id:string)=>void run(async()=>{
   const next=await api<ServerSession>(`/v1/sessions/${id}`);
   if(next.status==='expired'){await complete(id);return;}
-  apply(next);setView(next.status==='finished'?'result':'game');setShareText('');
+  apply(next);openQuiz(next.mode,next.id,next.status==='finished');setShareText('');
  }),[run,complete,apply]);
+
+ // Fetch on navigation, rather than refetching whenever an answer changes session state.
+ useEffect(()=>{
+  setRouteError('');setRouteLoading(false);setError('');
+  if(!route.id||!route.mode)return;
+  if(session?.id===route.id&&session.mode===route.mode){
+   if(route.view==='game'&&session.status==='finished')openQuiz(session.mode,session.id,true,true);
+   if(route.view==='result'&&session.status!=='finished')openQuiz(session.mode,session.id,false,true);
+   return;
+  }
+  const controller=new AbortController();
+  setRouteLoading(true);
+  void (async()=>{
+   try{
+    let loaded=await api<ServerSession>(`/v1/sessions/${route.id}`,{signal:controller.signal});
+    if(loaded.mode!==route.mode)throw new Error('Tur kimliği bu oyun moduna ait değil.');
+    if(loaded.status==='expired')loaded=await api<ServerSession>(`/v1/sessions/${route.id}/finish`,{method:'POST',signal:controller.signal});
+    if(controller.signal.aborted)return;
+    apply(loaded);setShareText('');
+    openQuiz(loaded.mode,loaded.id,loaded.status==='finished',true);
+    if(loaded.status==='finished')void refresh().catch(()=>{});
+   }catch(e){if(!controller.signal.aborted)setRouteError((e as Error).message);}
+   finally{if(!controller.signal.aborted)setRouteLoading(false);}
+  })();
+  return ()=>controller.abort();
+ },[route.path,routeRetry,apply,refresh]);
  const poolId=(mode:Mode)=>{
   if(mode==='daily')return 'all/easy';
   const base=mode==='quick'?(quickSide==='all'?'all':quickRegion||quickSide):mode==='expert'?`line:${lineCode}`:mode==='district'?`district:${district}`:'all';
@@ -107,14 +139,14 @@ function ServerExperience({userId,network,theme,toggleTheme}:{userId:string;netw
   if(!challenge&&!canStart(mode))throw new Error('Bu seçimde kullanılabilir soru havuzu yok. Başka bir bölge, hat veya zorluk seç.');
   const next=await api<ServerSession>('/v1/sessions',{method:'POST',body:challenge?{mode:'duel',challenge_code:challenge}:{mode,pool_id:poolId(mode)}});
   if(next.status==='expired'){await complete(next.id);return;}
-  apply(next);setView(next.status==='finished'?'result':'game');setShareText('');
+  apply(next);openQuiz(next.mode,next.id,next.status==='finished');setShareText('');
  });
  const restart=()=>void run(async()=>{
   if(!session)return;
   const mode=session.mode==='daily'?'quick':session.mode;
   const pool=session.mode==='daily'?'all/easy':session.pool_id.startsWith('challenge:')?`all/${session.difficulty}`:session.pool_id;
   const next=await api<ServerSession>('/v1/sessions',{method:'POST',body:{mode,pool_id:pool}});
-  apply(next);setView('game');setShareText('');
+  apply(next);openQuiz(next.mode,next.id);setShareText('');
  });
  const choose=useCallback((index:number)=>{
   if(!session||!question||feedback)return;
@@ -122,29 +154,34 @@ function ServerExperience({userId,network,theme,toggleTheme}:{userId:string;netw
    const response=await api<{accepted:boolean;feedback?:Feedback;session:ServerSession}>(`/v1/sessions/${session.id}/answers`,{method:'POST',body:{question_index:question.index,option_index:index}});
    apply(response.session,false);
    if(response.accepted&&response.feedback)setFeedback(response.feedback);
-   else{setQuestion(null);setFeedback(null);setView('result');}
+   else{setQuestion(null);setFeedback(null);openQuiz(session.mode,session.id,true,true);}
    if(response.session.status==='finished')void refresh().catch(e=>{if(mounted.current)setError((e as Error).message);});
   });
  },[session,question,feedback,run,apply,refresh]);
  const next=useCallback(()=>{
   if(!session||!feedback||busy)return;
   setError('');
-  if(session.status==='finished'){setView('result');return;}
+  if(session.status==='finished'){openQuiz(session.mode,session.id,true,true);return;}
   setQuestion(session.question);setFeedback(null);
  },[session,feedback,busy]);
  const openHint=()=>{
-  if(!session||!question||question.hint||feedback)return;
+  if(!session||!question||feedback||busy)return;
+  const key=`${session.id}:${question.index}`;
+  if(question.hint){setClosedHint(previous=>previous===key?null:key);return;}
+  setClosedHint(null);
   void run(async()=>{
    const result=await api<{hint:NonNullable<ServerQuestion['hint']>;hints_used:number}>(`/v1/sessions/${session.id}/hint`,{method:'POST',body:{question_index:question.index}});
    setQuestion(q=>q?.index===question.index?{...q,hint:result.hint}:q);
    setSession(s=>s?{...s,hints_used:result.hints_used,question:s.question?{...s.question,hint:result.hint}:null}:s);
   });
  };
+ const hintOpen=!!question?.hint&&closedHint!==`${session?.id}:${question?.index}`;
+ const hintPanel=session&&question?.hint&&<HintReveal key={`${session.id}:${question.index}`} open={hintOpen}><section className="hint-panel" id="question-hint-panel" aria-labelledby="hint-title"><h2 id="hint-title"><Lightbulb size={19}/>{question.hint.title}</h2><p role="status">{question.hint.text}</p>{question.hint.points.length>0&&<PointMap points={question.hint.points} stationMarkers/>}</section></HintReveal>;
  const seconds=session?.deadline?Math.max(0,Math.ceil((Date.parse(session.deadline)-tick-clockOffset)/1000)):null;
  useEffect(()=>{
-  if(view!=='game'||!session||session.status!=='active'||seconds!==0||busy||expiryAttempt.current===session.id)return;
+  if(view!=='game'||routeLoading||routeError||!session||session.id!==route.id||session.status!=='active'||seconds!==0||busy||expiryAttempt.current===session.id)return;
   expiryAttempt.current=session.id;void run(()=>complete(session.id));
- },[view,session,seconds,busy,run,complete]);
+ },[view,route.id,routeLoading,routeError,session,seconds,busy,run,complete]);
  useEffect(()=>{
   const handler=(event:KeyboardEvent)=>{
    if(view!=='game'||busy||event.altKey||event.ctrlKey||event.metaKey||/INPUT|SELECT|TEXTAREA|BUTTON/.test((event.target as HTMLElement).tagName))return;
@@ -161,43 +198,47 @@ function ServerExperience({userId,network,theme,toggleTheme}:{userId:string;netw
  const completed=history.some(g=>g.mode==='daily'&&g.result?.day===today);
  const pending=history.filter(g=>!g.finished_at);
  const resumeId=savedId??pending[0]?.id;
- const nav=(target:View)=>{if(busy)return;setView(target);setShareText('');setError('');if(target==='progress')void refresh().catch(e=>setError((e as Error).message));};
+ const nav=(target:PageView)=>{if(busy)return;navigate(target);setShareText('');setError('');if(target==='progress')void refresh().catch(e=>setError((e as Error).message));};
  const copy=async(text:string)=>{setShareText(text);try{await navigator.clipboard.writeText(text);}catch{/* Visible text remains available for manual copy. */}};
  const shareDuel=()=>{if(!session)return;void run(async()=>{
   const data=await api<{challenge_code:string}>(`/v1/sessions/${session.id}/share`,{method:'POST'});
-  const url=new URL(location.origin+location.pathname);url.searchParams.set('challenge',data.challenge_code);await copy(url.toString());
+  const url=new URL('/',location.origin);url.searchParams.set('challenge',data.challenge_code);await copy(url.toString());
  });};
  const result=session?.result;
  const title=view==='explore'?'Hatları keşfet':view==='progress'?'Yolculuğum':view==='data'?'Veri ve kaynaklar':view==='about'?'Hakkımızda':'Oyun alanı';
  const points=useMemo(()=>question?.map_points.map(([lat,lon])=>({lat,lon}))??[],[question]);
  const feedbackLine=feedback?.map.excluded_line?network.lines.find(l=>l.code===feedback.map.excluded_line):undefined;
  return <div className="app-shell"><a className="skip-link" href="#main-content">İçeriğe geç</a>
-  <aside className="sidebar"><button className="brand" onClick={()=>nav('home')} aria-label="Son Durak ana sayfa"><span className="brand-icon"><BusFront size={26}/></span><span>son durak<span className="brand-sub">İstanbul, oyun alanın.</span></span></button><div className="sidebar-label">KEŞFE ÇIK</div><nav className="main-nav" aria-label="Ana menü"><button className={['home','game','result'].includes(view)?'active':''} aria-label="Oyun alanı" aria-current={['home','game','result'].includes(view)?'page':undefined} onClick={()=>nav('home')}><Gamepad2 size={20}/><span>Oyun alanı</span><span className="nav-dot"/></button><button className={view==='explore'?'active':''} aria-label="Hatları keşfet" aria-current={view==='explore'?'page':undefined} onClick={()=>nav('explore')}><Route size={20}/><span>Hatları keşfet</span></button><button className={view==='progress'?'active':''} aria-label="Yolculuğum" aria-current={view==='progress'?'page':undefined} onClick={()=>nav('progress')}><Trophy size={20}/><span>Yolculuğum</span></button></nav><div className="sidebar-ticket"><Ticket size={22}/><strong>Her durak bir hikâye.</strong><p>İstanbul’u bildiğin yollardan bir de böyle keşfet.</p><span>34 <span>İSTANBUL</span></span></div><button className="source-nav" onClick={()=>nav('data')}><Database size={18}/> Veri ve kaynaklar</button><div className="sidebar-bottom"><span className="local-dot"/> {localAuth?'Yerel profil':'Hesabına bağlı'}</div></aside>
+  <aside className="sidebar"><button className="brand" onClick={()=>nav('home')} aria-label="Son Durak ana sayfa"><span className="brand-icon"><BusFront size={26}/></span><span>son durak<span className="brand-sub">İstanbul, oyun alanın.</span></span></button><div className="sidebar-label">KEŞFE ÇIK</div><nav className="main-nav" aria-label="Ana menü"><a className={['home','game','result'].includes(view)?'active':''} aria-label="Oyun alanı" aria-current={['home','game','result'].includes(view)?'page':undefined} href={PAGE_PATHS.home} onClick={event=>handlePageLink(event,()=>nav('home'))}><Gamepad2 size={20}/><span>Oyun alanı</span><span className="nav-dot"/></a><a className={view==='explore'?'active':''} aria-label="Hatları keşfet" aria-current={view==='explore'?'page':undefined} href={PAGE_PATHS.explore} onClick={event=>handlePageLink(event,()=>nav('explore'))}><Route size={20}/><span>Hatları keşfet</span></a><a className={view==='progress'?'active':''} aria-label="Yolculuğum" aria-current={view==='progress'?'page':undefined} href={PAGE_PATHS.progress} onClick={event=>handlePageLink(event,()=>nav('progress'))}><Trophy size={20}/><span>Yolculuğum</span></a></nav><button className="source-nav" onClick={()=>nav('data')}><Database size={18}/> Veri ve kaynaklar</button><div className="sidebar-bottom"><span className="local-dot"/> {localAuth?'Yerel profil':'Hesabına bağlı'}</div></aside>
   <div className="workspace"><header className="topbar"><div className="breadcrumb"><span className="breadcrumb-city">İstanbul</span><ChevronRight size={14}/><strong>{title}</strong></div><div className="topbar-right"><button className="theme-toggle" aria-label="Koyu tema" aria-pressed={theme==='dark'} onClick={toggleTheme}>{theme==='dark'?<Sun size={19}/>:<Moon size={19}/>}</button><span className="streak"><Flame size={17}/>{profile?.streak??0}</span><button className="profile" onClick={()=>nav('progress')}><span className="avatar">{profile?.rank[0]??'Y'}</span><span>{profile?.profile.display_name??'Yolcu'}<small>{profile?.profile.xp??0} XP</small></span></button>{!localAuth&&<button className="theme-toggle" aria-label="Çıkış yap" disabled={busy} onClick={()=>void run(async()=>{const {error}=await authClient().auth.signOut();if(error)throw error;})}><LogOut size={18}/></button>}</div></header>
   <main id="main-content" tabIndex={-1} className={`main-content ${view==='home'?'home-main':view==='game'?'game-main':''}`}>
    {error&&<div className="notice error" role="alert"><p>{error}</p><button className="secondary" disabled={busy} onClick={()=>{if(view==='game'&&session)resume(session.id);else void load();}}>Yeniden yükle</button></div>}
+   {(view==='notfound'||routeError)&&<RouteNotice error={routeError} onHome={()=>nav('home')} onRetry={routeError?()=>setRouteRetry(value=>value+1):undefined}/> }
+   {(view==='game'||view==='result')&&!routeError&&(routeLoading||session?.id!==route.id)&&<RouteNotice loading onHome={()=>nav('home')}/> }
    {view==='home'&&<><HomeHeading/>
     {oldChallenge&&<p className="notice">Bu bağlantı yerel oyun sürümüne ait. Arkadaşından yeni bir düello daveti iste.</p>}
     {challengeCode&&<div className="notice"><Users/><p>Düelloya davetlisin. Aynı soruları çöz, sonuçlarını karşılaştır.</p><button className="primary" disabled={busy} onClick={()=>start('duel',challengeCode)}>Düelloyu başlat</button></div>}
     {resumeId&&<div className="resume-bar"><Ticket size={20}/><span>Kayıtlı turuna devam edebilirsin.</span><button disabled={busy} onClick={()=>resume(resumeId)}>Devam et</button></div>}
-    {!catalog?<p>Oyunlar yükleniyor…</p>:<>{!matchingNetwork&&<p className="notice error">Hat verisinin sürümü sunucuyla uyuşmuyor. Aynı veri kopyasıyla hazırlanmış sürümü kullanmalısın.</p>}<fieldset className="remote-controls" disabled={busy}><HomeModes network={homeNetwork} difficulty={difficulty} setDifficulty={setDifficulty} quickSide={quickSide} setQuickSide={setQuickSide} quickRegion={quickRegion} setQuickRegion={setQuickRegion} districts={districts} lineCode={lineCode} setLineCode={setLineCode} district={district} setDistrict={setDistrict} completed={completed} start={start} nav={()=>nav('data')} canStart={canStart}/></fieldset>{!canStart('quick')&&matchingNetwork&&<p className="notice">Bu bölge ve zorluk için yeterli soru yok. Başka bir seçim yapabilirsin.</p>}</>}
+    {!catalog?<p>Oyunlar yükleniyor…</p>:<>{!matchingNetwork&&<p className="notice error">Hat verisinin sürümü sunucuyla uyuşmuyor. Aynı veri kopyasıyla hazırlanmış sürümü kullanmalısın.</p>}<fieldset className="remote-controls" disabled={busy}><HomeModes network={homeNetwork} difficulty={difficulty} setDifficulty={setDifficulty} quickSide={quickSide} setQuickSide={setQuickSide} quickRegion={quickRegion} setQuickRegion={setQuickRegion} districts={districts} lineCode={lineCode} setLineCode={setLineCode} district={district} setDistrict={setDistrict} completed={completed} start={start} canStart={canStart}/></fieldset>{!canStart('quick')&&matchingNetwork&&<p className="notice">Bu bölge ve zorluk için yeterli soru yok. Başka bir seçim yapabilirsin.</p>}</>}
    </>}
-   {view==='game'&&session&&question&&<>
+   {view==='game'&&!routeLoading&&!routeError&&session&&session.id===route.id&&question&&<>
     <div className="game-top"><button className="text-button" disabled={busy} onClick={()=>nav('home')}><X size={18}/> Ara ver</button><span className="chip">{MODE_NAMES[session.mode]} · {session.difficulty==='hard'?'Zor':'Kolay'}</span><div className={`timer ${seconds!==null&&seconds<=15?'urgent':''}`}>{session.mode==='quick'&&seconds!==null?<><Clock3 size={20}/>{Math.floor(seconds/60)}:{String(seconds%60).padStart(2,'0')}</>:session.mode==='survival'?<><Heart size={20}/>{session.lives}<small>can</small></>:<><Trophy size={20}/>{session.correct*(session.difficulty==='hard'?150:100)}</>}</div></div>
     <div className="question-progress"><span>SORU {question.index+1} <small>/ {session.total}</small></span><div><i style={{width:`${(question.index+1)/session.total*100}%`}}/></div><span>{session.correct} doğru</span></div>
-    <section className="question-card"><div className="question-kicker"><span><Route size={16}/>{KIND_LABELS[question.kind]}</span><span>{session.difficulty==='hard'?150:100} PUAN</span></div><h1 ref={questionHeading} tabIndex={-1}>{question.prompt}</h1>
+    <div className="game-question-layout"><section className="question-card"><div className="question-kicker"><span><Route size={16}/>{KIND_LABELS[question.kind]}</span><span>{session.difficulty==='hard'?150:100} PUAN</span></div><h1 ref={questionHeading} tabIndex={-1}>{question.prompt}</h1>
      {question.kind==='map'&&<PointMap points={points} connect/>}
-     {!feedback&&<div className="hint-actions"><button className="hint-button" disabled={busy||!!question.hint} onClick={openHint}><Lightbulb size={18}/>{question.hint?'İpucu açıldı':'İpucu al'}</button><span>Puan düşmez.{session.mode==='quick'?' Süre devam eder.':''}</span></div>}
-     {!feedback&&question.hint&&<section className="hint-panel"><h2><Lightbulb size={19}/>{question.hint.title}</h2><p role="status">{question.hint.text}</p>{question.hint.points.length>0&&<PointMap points={question.hint.points}/>}</section>}
+     {!feedback&&<div className="hint-actions"><button className="hint-button" disabled={busy} onClick={openHint} aria-expanded={hintOpen} aria-controls={hintOpen?'question-hint-panel':undefined}><Lightbulb size={18}/>{hintOpen?'İpucunu kapat':question.hint?'İpucunu aç':'İpucu al'}</button><span><CheckCircle2 size={14} aria-hidden="true"/>Puan düşmez.{session.mode==='quick'?' Süre devam eder.':''}</span></div>}
+     {!feedback&&!question.hint?.points.length&&hintPanel}
      <div className="answer-grid">{question.options.map(option=><button key={option.index} disabled={busy||!!feedback} className={`answer-option ${feedback?.correct_index===option.index?'correct':''} ${feedback&&!feedback.correct&&feedback.option_index===option.index?'wrong':''}`} onClick={()=>choose(option.index)}><span className="option-letter">{'ABCD'[option.index]}</span><span>{option.label}</span>{feedback?.correct_index===option.index?<CheckCircle2 size={22}/>:<span className="key-hint">{option.index+1}</span>}</button>)}</div>
-     {feedback?<><div className={`answer-feedback ${feedback.correct?'success':'incorrect'}`} role="status"><div className="feedback-title"><strong>{feedback.correct?'Doğru duraktasın!':'Bu kez durağı kaçırdın.'}</strong></div><p>{feedback.explanation}</p><button className="primary" disabled={busy} onClick={next}>{session.status==='finished'?'Sonucumu gör':'Sıradaki soru'}<ChevronRight size={18}/></button></div><AutoAdvance key={`${session.id}:${question.index}`} delay={autoDelay} suspended={busy} onDelayChange={v=>{setAutoDelay(v);write('son-durak:auto-advance',v);}} onNext={next}/></>:<p className="question-hint"><Info size={15}/>{busy?'Cevabın kaydediliyor…':'Bir doğru cevap var. Klavyede 1–4 tuşlarını da kullanabilirsin.'}</p>}
+     {feedback?<><div ref={feedbackRef} className={`answer-feedback ${feedback.correct?'success':'incorrect'}`} role="status"><div className="feedback-title"><strong>{feedback.correct?'Doğru duraktasın!':'Bu kez durağı kaçırdın.'}</strong></div><p>{feedback.explanation}</p></div><AutoAdvance key={`${session.id}:${question.index}`} suspended={busy} label={session.status==='finished'?'Sonucumu gör':'Sonraki soru'} onNext={next}/></>:<p className="question-hint"><Info size={15}/>{busy?'Cevabın kaydediliyor…':'Bir doğru cevap var. Klavyede 1–4 tuşlarını da kullanabilirsin.'}</p>}
     </section>
+     {!feedback&&!!question.hint?.points.length&&hintPanel}
+    </div>
     {feedback&&question.kind!=='map'&&(session.network_version===network.version?<div className="explanation-map"><div className="section-heading"><h2>Duraklara yakından bak</h2><span>{feedback.map.excluded_line??feedback.map.line_code} · İETT</span></div><RouteMap network={network} stopIds={feedback.map.stop_ids} connect={!feedback.map.excluded_line} excludedLine={feedbackLine} labels={feedback.map.excluded_line?feedback.map.stop_ids.map(id=>`Sorulan durak · ${network.stops[id]?.name??''}`):undefined}/></div>:<p className="notice">Bu eski turun harita verisi farklı bir sürüme ait; açıklamayı yukarıdan okuyabilirsin.</p>)}
     {session.mode==='quick'&&<p className="quiet centered">5 dakikalık süre, açıklamalar okunurken ve ara verildiğinde de devam eder.</p>}
     <div className="remote-game-actions"><button className="text-button" disabled={busy} onClick={()=>void run(()=>complete(session.id))}>Turu bitir</button>{session.mode==='duel'&&<button className="secondary" disabled={busy} onClick={shareDuel}><Copy size={17}/> Düello bağlantısı</button>}</div>
    </>}
-   {view==='game'&&session&&!question&&<button className="primary" disabled={busy} onClick={()=>void run(()=>complete(session.id))}>Sonucumu göster</button>}
-   {view==='result'&&result&&<section className="results-page"><div className="eyebrow">{MODE_NAMES[result.mode]} TAMAMLANDI</div><div className="result-icon"><Trophy size={42}/></div><h1>{result.correct===result.total&&result.total>0?'İstanbul senden sorulur.':'Her tur yeni bir keşif.'}</h1><p>{result.total} sorudan {result.correct} doğru.</p><div className="result-stats"><div><strong>{result.score}</strong><span>puan</span></div><div><strong>{result.correct}/{result.total}</strong><span>doğru</span></div><div><strong>+{result.xp}</strong><span>XP</span></div></div><p>{result.hints_used} soruda ipucu kullanıldı.</p><div className="result-grid" aria-label="Cevapların özeti">{Array.from({length:result.total},(_,i)=><span key={i} className={result.answers[i]?.correct?'good':result.answers[i]?'bad':'empty'}>{result.answers[i]?.correct?'✓':result.answers[i]?'×':i+1}</span>)}</div><div className="result-actions"><button className="primary" disabled={busy} onClick={restart}>Yeni tur</button><button className="secondary" onClick={()=>void copy(`Son Durak · ${MODE_NAMES[result.mode]}\n${result.correct}/${result.total} · ${result.score} puan\n${result.answers.map(a=>a.correct?'🟩':'⬛').join('')}\n${location.origin+location.pathname}`)}><Share2 size={17}/> Sonucunu paylaş</button>{result.mode==='duel'&&<button className="secondary" disabled={busy} onClick={shareDuel}>Düello bağlantısı</button>}</div><button className="secondary" onClick={()=>nav('home')}><House size={18}/> Ana sayfaya dön</button></section>}
+   {view==='game'&&!routeLoading&&!routeError&&session&&session.id===route.id&&!question&&<button className="primary" disabled={busy} onClick={()=>void run(()=>complete(session.id))}>Sonucumu göster</button>}
+   {view==='result'&&!routeLoading&&!routeError&&session&&session.id===route.id&&result&&<section className="results-page"><div className="eyebrow">{MODE_NAMES[result.mode]} TAMAMLANDI</div><div className="result-icon"><Trophy size={42}/></div><h1>{result.correct===result.total&&result.total>0?'İstanbul senden sorulur.':'Her tur yeni bir keşif.'}</h1><p>{result.total} sorudan {result.correct} doğru.</p><div className="result-stats"><div><strong>{result.score}</strong><span>puan</span></div><div><strong>{result.correct}/{result.total}</strong><span>doğru</span></div><div><strong>+{result.xp}</strong><span>XP</span></div></div><p>{result.hints_used} soruda ipucu kullanıldı.</p><div className="result-grid" aria-label="Cevapların özeti">{Array.from({length:result.total},(_,i)=><span key={i} className={result.answers[i]?.correct?'good':result.answers[i]?'bad':'empty'}>{result.answers[i]?.correct?'✓':result.answers[i]?'×':i+1}</span>)}</div><div className="result-actions"><button className="primary" disabled={busy} onClick={restart}>Yeni tur</button><button className="secondary" onClick={()=>void copy(`Son Durak · ${MODE_NAMES[result.mode]}\n${result.correct}/${result.total} · ${result.score} puan\n${result.answers.map(a=>a.correct?'🟩':'⬛').join('')}\n${location.origin+location.pathname}`)}><Share2 size={17}/> Sonucunu paylaş</button>{result.mode==='duel'&&<button className="secondary" disabled={busy} onClick={shareDuel}>Düello bağlantısı</button>}</div><button className="secondary" onClick={()=>nav('home')}><House size={18}/> Ana sayfaya dön</button></section>}
    {view==='progress'&&profile&&<Account profile={profile} history={history} onProfile={setProfile} onResume={resume} onRefresh={refresh}/>}
    {view==='explore'&&<Explorer network={network} initialCode={lineCode}/>}
    {view==='data'&&<DataView network={network} remote localServer={localAuth}/>}
